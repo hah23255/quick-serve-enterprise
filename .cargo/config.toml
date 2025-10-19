@@ -1,0 +1,10 @@
+# Cargo build configuration for Android noexec bypass
+# Builds in system temp (executable), stores master copy in Enterprise
+
+[build]
+# Use system temp directory (executable location)
+target-dir = "/data/data/com.termux/files/usr/tmp/cargo-build-quick-serve"
+
+[term]
+verbose = false
+color = 'auto'

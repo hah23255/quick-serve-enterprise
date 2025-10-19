@@ -1,17 +1,21 @@
 /target
 /.idea
 /.vscode
-/assets
 
 # Internal documentation - DO NOT COMMIT
 DEPLOYMENT-PRIVATE.md
 # Enterprise-specific exclusions
 docs/DEPLOYMENT-PRIVATE.md
+docs/DEPLOYMENT-PRIVATE.md.old
 config/production.env
 *.key
 *.pem
 .env
 .env.*
+
+# Node/pnpm
+node_modules/
+package-lock.json
 
 # Build artifacts
 target/
@@ -23,4 +27,5 @@ bin/quick-serve
 
 # Backup files
 *.bak
+*.old
 *~

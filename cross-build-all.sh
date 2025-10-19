@@ -12,7 +12,7 @@ arm-unknown-linux-gnueabihf     \
 )
 
 rm -rf target/assets
-mkdir -p target/assets 2>/dev/null || true
+mkdir -p target/assets
 
 # Cross-compile for each target platform
 for target in "${TARGETS[@]}"; do
@@ -31,8 +31,8 @@ for target in "${TARGETS[@]}"; do
         ext=".exe"
     fi
 
-    cp -vf target/${target}/release/quick-serve-gui${ext}   target/assets/quick-serve-gui-${target}${ext} || true
-    cp -vf target/${target}/release/quick-serve${ext}       target/assets/quick-serve-${target}${ext} || true
+    cp -vf target/${target}/release/quick-serve-gui${ext}   target/assets/quick-serve-gui-${target}${ext}
+    cp -vf target/${target}/release/quick-serve${ext}       target/assets/quick-serve-${target}${ext}
 done
 
 

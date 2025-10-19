@@ -1,0 +1,43 @@
+{
+  "name": "@enterprise/quick-serve",
+  "version": "0.3.1",
+  "private": true,
+  "type": "module",
+  "description": "Quick-serve HTTP/FTP/TFTP server - Enterprise production deployment",
+  "scripts": {
+    "build": "cargo build --release --no-default-features --bin quick-serve",
+    "deploy:enterprise": "cp $PREFIX/tmp/cargo-build-quick-serve/release/quick-serve /storage/emulated/0/Enterprise/core/runtime/bin/quick-serve-prod",
+    "deploy:exec": "cp /storage/emulated/0/Enterprise/core/runtime/bin/quick-serve-prod ~/.local/bin/quick-serve-prod && chmod +x ~/.local/bin/quick-serve-prod",
+    "deploy": "pnpm run deploy:enterprise && pnpm run deploy:exec",
+    "build:deploy": "pnpm run build && pnpm run deploy",
+    "start": "sv up quick-serve",
+    "stop": "sv down quick-serve",
+    "restart": "sv restart quick-serve",
+    "status": "sv status quick-serve",
+    "logs": "tail -f $PREFIX/var/service/quick-serve/log/main/current",
+    "logs:error": "grep -i error $PREFIX/var/service/quick-serve/log/main/current | tail -50",
+    "health": "/storage/emulated/0/Enterprise/core/monitoring/quick-serve/health-check.sh || echo 'Health check script not yet created'",
+    "test": "cargo test",
+    "test:integration": "cargo test --test '*'",
+    "check": "cargo check",
+    "clean": "cargo clean && rm -rf ~/tmp/cargo-build",
+    "update": "cargo update",
+    "audit": "cargo audit || echo 'cargo-audit not installed'",
+    "doc": "cargo doc --no-deps --open",
+    "version:check": "~/.local/bin/quick-serve-prod --version"
+  },
+  "engines": {
+    "node": ">=18.0.0",
+    "pnpm": ">=8.0.0"
+  },
+  "keywords": [
+    "http-server",
+    "ftp-server",
+    "tftp-server",
+    "file-server",
+    "rust",
+    "enterprise"
+  ],
+  "author": "Enterprise Deployment Team",
+  "license": "MIT"
+}

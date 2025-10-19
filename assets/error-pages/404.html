@@ -1,0 +1,105 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>404 Not Found</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+            background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%);
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 20px;
+        }
+        .container {
+            background: white;
+            border-radius: 16px;
+            box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+            padding: 60px 40px;
+            text-align: center;
+            max-width: 600px;
+            width: 100%;
+        }
+        .error-code {
+            font-size: 120px;
+            font-weight: 800;
+            background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+            margin-bottom: 20px;
+            line-height: 1;
+        }
+        h1 {
+            font-size: 32px;
+            color: #2d3748;
+            margin-bottom: 16px;
+        }
+        p {
+            font-size: 18px;
+            color: #718096;
+            margin-bottom: 12px;
+            line-height: 1.6;
+        }
+        .search-box {
+            margin: 24px 0;
+            padding: 16px;
+            background: #f7fafc;
+            border-radius: 8px;
+        }
+        .footer {
+            margin-top: 32px;
+            padding-top: 24px;
+            border-top: 1px solid #e2e8f0;
+            color: #a0aec0;
+            font-size: 14px;
+        }
+        .icon {
+            font-size: 80px;
+            margin-bottom: 20px;
+        }
+        .suggestions {
+            text-align: left;
+            margin: 20px 0;
+            padding: 16px;
+            background: #f7fafc;
+            border-radius: 8px;
+        }
+        .suggestions ul {
+            margin-left: 20px;
+            margin-top: 8px;
+        }
+        .suggestions li {
+            margin-bottom: 8px;
+            color: #4a5568;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="icon">🔍</div>
+        <div class="error-code">404</div>
+        <h1>Page Not Found</h1>
+        <p>The resource you're looking for doesn't exist or has been moved.</p>
+        <div class="suggestions">
+            <p><strong>Try the following:</strong></p>
+            <ul>
+                <li>Check the URL for typos</li>
+                <li>Use the browser's back button</li>
+                <li>Return to the home page</li>
+                <li>Search for what you need</li>
+            </ul>
+        </div>
+        <p style="color: #4a5568; font-size: 16px;">
+            If you followed a link, please report it to the site administrator.
+        </p>
+        <div class="footer">
+            Quick-serve Enterprise Edition | Powered by Rust
+        </div>
+    </div>
+</body>
+</html>
