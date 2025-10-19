@@ -1,0 +1,76 @@
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+[package]
+authors =  ["João Loureiro"]
+name = "quick-serve"
+version = "0.3.1"
+edition = "2021"
+license = "MIT"
+repository = "https://github.com/joaofl/quick-serve"
+homepage = "https://github.com/joaofl/quick-serve"
+description = "Quick Serve: A zero-config, multi-platform, multi-protocol standalone server for prompt file serving, with or without GUI."
+categories = ["command-line-utilities", "development-tools"]
+
+[features]
+ui = ["dep:egui", "dep:eframe", "dep:rfd"]
+default = ["ui"]
+
+[[bin]]
+name = "quick-serve-gui"
+path = "src/main_gui.rs"
+required-features = ["ui"]
+
+[[bin]]
+name = "quick-serve"
+path = "src/main_cli.rs"
+
+[dependencies]
+# TODO: Put only the used features
+tokio = { version = "1.42.0", features = ["full"]}
+async-trait = "0.1.83"
+
+# FTP server deps
+libunftp = "0.21.0"
+unftp-sbe-fs = "0.3.0"
+
+# TFTP server
+async-tftp = "0.3.6"
+
+# HTTP server deps: TODO: check whats needed
+hyper = { version = "1.5.2", features = ["full"] }
+http-body-util = "0.1.2"
+hyper-util = { version = "0.1.10", features = ["full"] }
+bytes = "1.9.0"
+
+# DHCP server deps
+dhcp4r = "0.2.3"
+
+# Log related
+log = "0.4.22"
+
+# For the headless version
+clap = { version = "4.5.23", features = ["derive", "string"] }
+ctrlc = "3.4.5"
+sha2 = "0.10.8"
+
+# For the gui version
+egui = {version = "0.31.1", optional = true}
+eframe = {version = "0.31.1", features = ["wayland"], optional = true}
+rfd = {version = "0.15.1", optional = true}
+
+[dev-dependencies]
+
+testcontainers = { version = "0.24.0" }
+testcontainers-modules = { version = "0.12.1", features = ["blocking"] }
+
+sha2 = "0.10.8"
+tempfile = "3.15.0"
+rand = "0.9.1"
+assert_cmd = "2.0.16"
+predicates = "3.1.3"
+
+[profile.release]
+strip = true  # Automatically strip symbols from the binary.
+opt-level = "z"  # Optimize for size.
+lto = true # Link time optimizations
+panic = "abort" # Saves binary size on removing backtrace data on panic
+

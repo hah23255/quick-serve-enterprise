@@ -1,0 +1,7 @@
+/target
+/.idea
+/.vscode
+/assets
+
+# Internal documentation - DO NOT COMMIT
+DEPLOYMENT-PRIVATE.md

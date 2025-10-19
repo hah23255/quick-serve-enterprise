@@ -1,0 +1,25 @@
+services:
+  client:
+    image: test_image:latest
+    build:
+      context: ../
+      dockerfile: docker/dockerfile
+    networks:
+      - c_lan
+
+  server:
+    image: test_image:latest
+    build:
+      context: ../
+      dockerfile: docker/dockerfile
+    networks:
+      c_lan:
+        ipv4_address: 172.12.1.4
+
+networks:
+  c_lan:
+    driver: bridge
+    ipam:
+      driver: default
+      config:
+        - subnet: 172.12.1.0/24

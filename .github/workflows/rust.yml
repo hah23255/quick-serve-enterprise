@@ -1,0 +1,69 @@
+name: Rust
+
+on:
+  push:
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
+  # schedule:
+  #   - cron: '0 0 * * *'
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    strategy:
+      matrix:
+        target:
+          - "x86_64-unknown-linux-gnu"
+          - "x86_64-pc-windows-gnu"
+          - "aarch64-unknown-linux-gnu"
+          - "armv7-unknown-linux-gnueabihf"
+          - "arm-unknown-linux-gnueabihf"
+
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v3
+
+    - name: Setup for Linux x86_64
+      uses: actions-rs/toolchain@v1
+      with:
+        profile: minimal
+        toolchain: stable
+
+    - name: Install extra packages
+      run: |
+        cargo install cross --git https://github.com/cross-rs/cross
+
+    - name: Build target ${{ matrix.target }}
+      continue-on-error: false
+      run: cross build --release --target ${{ matrix.target }}
+
+
+  test:
+    needs: build
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v3
+
+    - name: Setup for Linux x86_64
+      uses: actions-rs/toolchain@v1
+      with:
+        profile: minimal
+        toolchain: stable
+
+    - name: Install Dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y docker-compose  nasm build-essential clang wget tftp-hpa curl
+
+    - name: Test
+      continue-on-error: false
+      run: |
+        cargo build
+        cargo test -- --nocapture
