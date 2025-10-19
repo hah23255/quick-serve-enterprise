@@ -5,3 +5,22 @@
 
 # Internal documentation - DO NOT COMMIT
 DEPLOYMENT-PRIVATE.md
+# Enterprise-specific exclusions
+docs/DEPLOYMENT-PRIVATE.md
+config/production.env
+*.key
+*.pem
+.env
+.env.*
+
+# Build artifacts
+target/
+bin/quick-serve
+
+# Runtime
+*.log
+*.pid
+
+# Backup files
+*.bak
+*~
