@@ -1,4 +1,4 @@
-# Quick-Serve Enterprise - Simple Installation
+# DropBasket - Simple Installation
 
 ## One-Command Install
 
@@ -7,7 +7,7 @@
 curl -sSL https://raw.githubusercontent.com/hah23255/quick-serve-enterprise/main/install.sh | bash
 ```
 
-### Android (Termux)
+### Termux on Android
 ```bash
 curl -sSL https://raw.githubusercontent.com/hah23255/quick-serve-enterprise/main/install-android.sh | bash
 ```
@@ -18,17 +18,17 @@ curl -sSL https://raw.githubusercontent.com/hah23255/quick-serve-enterprise/main
 
 ### Start Server
 ```bash
-~/qs-start
+qs-start
 ```
 
 ### Stop Server
 ```bash
-~/qs-stop
+qs-stop
 ```
 
 ### Sync with Another Device
 ```bash
-~/qs-sync 192.168.1.120
+qs-sync 192.168.1.120
 ```
 
 ---
@@ -37,13 +37,33 @@ curl -sSL https://raw.githubusercontent.com/hah23255/quick-serve-enterprise/main
 
 **Linux:**
 - Binary: `~/.local/bin/quick-serve`
-- Data: `~/quick-serve-data/`
+- Share folder: **`~/DropBasket/`** 🧺
+- Desktop shortcut: DropBasket icon on desktop
 - Port: 50080 (non-standard)
 
-**Android:**
+**Termux on Android:**
 - Binary: `$PREFIX/bin/quick-serve`
-- Data: `~/storage/shared/quick-serve/`
+- Share folder: **`~/storage/shared/DropBasket/`** 🧺
+- Widgets: DropBasket-Start, DropBasket-Stop
 - Port: 50080 (non-standard)
+
+---
+
+## Share Files
+
+**Linux:**
+```bash
+# Copy files to DropBasket
+cp /path/to/file.pdf ~/DropBasket/
+
+# Or drag & drop into ~/DropBasket folder
+```
+
+**Termux:**
+```bash
+# Files in Android downloads automatically accessible
+cp ~/storage/downloads/file.pdf ~/storage/shared/DropBasket/
+```
 
 ---
 
@@ -51,80 +71,108 @@ curl -sSL https://raw.githubusercontent.com/hah23255/quick-serve-enterprise/main
 
 ### Between Two Devices
 
-**Device 1 (192.168.1.120):**
+**Device 1 (Linux - 192.168.1.120):**
 ```bash
-~/qs-start
+qs-start
 ```
 
-**Device 2 (192.168.1.122):**
+**Device 2 (Termux - 192.168.1.122):**
 ```bash
-~/qs-start
-~/qs-sync 192.168.1.120  # Pull files from Device 1
+qs-start
+qs-sync 192.168.1.120  # Pull files from Device 1
 ```
 
-Files automatically sync from Device 1 → Device 2.
+Files in Linux DropBasket now sync to Android DropBasket.
 
 ### Continuous Sync (Optional)
 
-Add to crontab for auto-sync every 5 minutes:
+**Linux - Auto-sync every 5 minutes:**
 ```bash
 crontab -e
-# Add this line:
-*/5 * * * * $HOME/qs-sync 192.168.1.120 >/dev/null 2>&1
+# Add: */5 * * * * $HOME/qs-sync 192.168.1.120
+```
+
+**Termux - Auto-sync with Termux:Task:**
+```bash
+# Install Termux:Task from F-Droid
+# Schedule: qs-sync 192.168.1.120
 ```
 
 ---
 
 ## Access from Browser
 
-**From any device on same WiFi:**
+**From any device on WiFi:**
 ```
-http://192.168.1.120:50080
-http://192.168.1.122:50080
-```
-
-**From Android to Linux:**
-```
-http://192.168.1.120:50080
+http://192.168.1.120:50080  (Linux)
+http://192.168.1.122:50080  (Termux)
 ```
 
-**From Linux to Android:**
-```
-http://192.168.1.122:50080
-```
+**Beautiful landing page shows:**
+- 🧺 DropBasket branding
+- 📁 Available files
+- 🔄 Sync status
+
+---
+
+## Desktop Shortcut (Linux)
+
+**Location:** Desktop/DropBasket
+
+**Icon:** Purple gradient basket (SVG)
+
+**Click to:** Start server instantly
+
+**Right-click options:**
+- Start Server
+- Stop Server
+- Open DropBasket Folder
+
+---
+
+## Termux Widget (Android)
+
+**Install:** Termux:Widget from F-Droid
+
+**Widgets created:**
+- DropBasket-Start (green)
+- DropBasket-Stop (red)
+
+**Add to home screen:** Long-press → Widgets → Termux → DropBasket
+
+**Tap to:** Start/stop server instantly
 
 ---
 
 ## Requirements
 
 **Linux:**
-- curl
-- git
-- Internet connection (first install only)
+- curl, git
+- Internet (first install only)
 
-**Android:**
-- Termux app (from F-Droid)
+**Termux on Android:**
+- Termux app (F-Droid, not Play Store)
 - Storage permission
-- WiFi connection
+- WiFi
 
 ---
 
 ## Port Configuration
 
-Default port: **50080** (non-standard, no conflicts)
+**Default:** 50080 (non-standard, no conflicts)
 
-Change port:
+**Change:**
 ```bash
-~/qs-start 51234  # Use custom port
+qs-start 51234  # Custom port
 ```
 
 ---
 
 ## Firewall
 
-**Linux:** Automatically opened (port 50080)
+**Linux:** Auto-opened (port 50080)
 
-**Android:** No firewall by default
+**Termux:** No firewall needed
 
 ---
 
@@ -132,45 +180,32 @@ Change port:
 
 **Linux:**
 ```bash
-rm -rf ~/quick-serve-enterprise
+rm -rf ~/quick-serve-enterprise ~/DropBasket
 rm ~/.local/bin/quick-serve
 rm ~/qs-start ~/qs-stop ~/qs-sync
+rm ~/Desktop/dropbasket.desktop
+rm ~/.local/share/applications/dropbasket.desktop
 ```
 
-**Android:**
+**Termux:**
 ```bash
-rm -rf ~/quick-serve-enterprise
-rm $PREFIX/bin/quick-serve
-rm $PREFIX/bin/qs-*
+rm -rf ~/quick-serve-enterprise ~/storage/shared/DropBasket
+rm $PREFIX/bin/quick-serve $PREFIX/bin/qs-*
+rm ~/.shortcuts/DropBasket-*
 ```
 
 ---
 
-## Troubleshooting
+## Features
 
-**Can't connect?**
-```bash
-# Check server running
-ps aux | grep quick-serve
-
-# Check port
-ss -tlnp | grep 50080
-```
-
-**Sync not working?**
-```bash
-# Install rsync
-# Linux:
-sudo apt install rsync
-
-# Android:
-pkg install rsync
-```
-
-**Firewall blocking?**
-```bash
-sudo ufw allow 50080/tcp
-```
+✅ Human-friendly folder name (DropBasket)  
+✅ Beautiful desktop shortcut with icon  
+✅ Termux widgets for Android  
+✅ One-command installation  
+✅ Auto-configuration  
+✅ Device synchronization  
+✅ Non-standard ports only  
+✅ Simple 3-command interface  
 
 ---
 

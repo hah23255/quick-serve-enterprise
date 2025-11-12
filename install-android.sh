@@ -1,12 +1,12 @@
 #!/data/data/com.termux/files/usr/bin/bash
-# Quick-Serve Enterprise - Android/Termux Installer
+# Quick-Serve Enterprise - Termux Installer
 # Usage in Termux: curl -sSL https://raw.githubusercontent.com/hah23255/quick-serve-enterprise/main/install-android.sh | bash
 
 set -e
 
 echo "======================================"
 echo "Quick-Serve Enterprise"
-echo "Android/Termux Installer"
+echo "Termux on Android Installer"
 echo "======================================"
 
 # Update packages
@@ -40,84 +40,127 @@ cp target/release/quick-serve $PREFIX/bin/
 chmod +x $PREFIX/bin/quick-serve
 
 # Create data directory
-mkdir -p $HOME/storage/shared/quick-serve
+mkdir -p $HOME/storage/shared/DropBasket
 
 # Create start script
-cat > $PREFIX/bin/qs-start << 'EOF'
+cat > $PREFIX/bin/qs-start << 'STARTEOF'
 #!/data/data/com.termux/files/usr/bin/bash
 PORT=${1:-50080}
-DIR=${2:-$HOME/storage/shared/quick-serve}
+DIR=${2:-$HOME/storage/shared/DropBasket}
 quick-serve --headless --http=$PORT --serve-dir=$DIR --bind-ip=0.0.0.0 &
 IP=$(ip -4 addr show wlan0 | grep -oP '(?<=inet\s)\d+(\.\d+){3}' | head -1)
-echo "✅ Server started"
-echo "Port: $PORT"
-echo "Access: http://$IP:$PORT"
-EOF
+echo "✅ DropBasket server started"
+echo "📁 Folder: $DIR"
+echo "🌐 Port: $PORT"
+echo "📱 Access: http://$IP:$PORT"
+termux-notification --title "DropBasket Started" --content "Server running on port $PORT"
+STARTEOF
 chmod +x $PREFIX/bin/qs-start
 
 # Create stop script
-cat > $PREFIX/bin/qs-stop << 'EOF'
+cat > $PREFIX/bin/qs-stop << 'STOPEOF'
 #!/data/data/com.termux/files/usr/bin/bash
 pkill quick-serve && echo "✅ Server stopped" || echo "Server not running"
-EOF
+termux-notification --title "DropBasket Stopped" --content "Server stopped"
+STOPEOF
 chmod +x $PREFIX/bin/qs-stop
 
 # Create sync script
-cat > $PREFIX/bin/qs-sync << 'EOF'
+cat > $PREFIX/bin/qs-sync << 'SYNCEOF'
 #!/data/data/com.termux/files/usr/bin/bash
 if [ -z "$1" ]; then
     echo "Usage: qs-sync <remote-ip>"
     echo "Example: qs-sync 192.168.1.120"
     exit 1
 fi
-echo "Syncing with $1..."
-rsync -avz --progress $HOME/storage/shared/quick-serve/ $1:~/quick-serve-data/
+echo "🔄 Syncing DropBasket with $1..."
+rsync -avz --progress $HOME/storage/shared/DropBasket/ $1:~/DropBasket/
 echo "✅ Sync complete"
-EOF
+termux-notification --title "DropBasket Sync" --content "Synced with $1"
+SYNCEOF
 chmod +x $PREFIX/bin/qs-sync
 
-# Create auto-sync service
-mkdir -p ~/.config/termux
-cat > ~/.config/termux/boot/qs-server << 'EOF'
+# Create widget script for Termux:Widget
+mkdir -p $HOME/.shortcuts
+cat > $HOME/.shortcuts/DropBasket-Start << 'WIDGETEOF'
+#!/data/data/com.termux/files/usr/bin/bash
+qs-start
+WIDGETEOF
+chmod +x $HOME/.shortcuts/DropBasket-Start
+
+cat > $HOME/.shortcuts/DropBasket-Stop << 'WIDGETEOF'
+#!/data/data/com.termux/files/usr/bin/bash
+qs-stop
+WIDGETEOF
+chmod +x $HOME/.shortcuts/DropBasket-Stop
+
+# Create boot script
+mkdir -p ~/.config/termux/boot
+cat > ~/.config/termux/boot/dropbasket << 'BOOTEOF'
 #!/data/data/com.termux/files/usr/bin/bash
 sleep 10
 qs-start
-EOF
-chmod +x ~/.config/termux/boot/qs-server
+BOOTEOF
+chmod +x ~/.config/termux/boot/dropbasket
 
 # Create index page
-cat > $HOME/storage/shared/quick-serve/index.html << 'HTMLEOF'
+cat > $HOME/storage/shared/DropBasket/index.html << 'HTMLEOF'
 <!DOCTYPE html>
 <html><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Quick-Serve</title>
+<title>DropBasket</title>
 <style>
-body{font-family:Arial;padding:20px;background:#f5f5f5;margin:0}
-h1{color:#333;font-size:24px}
-p{color:#666;font-size:16px}
-ul{list-style:none;padding:0}
-li{padding:15px;background:white;margin:10px 0;border-radius:8px;box-shadow:0 2px 4px rgba(0,0,0,0.1)}
-a{text-decoration:none;color:#0066cc;font-size:18px;font-weight:500;display:block}
-.status{background:#4CAF50;color:white;padding:10px;border-radius:8px;text-align:center;margin-bottom:20px}
+body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Arial,sans-serif;
+     padding:0;margin:0;background:linear-gradient(135deg,#667eea 0%,#764ba2 100%);
+     min-height:100vh}
+.container{padding:20px;max-width:600px;margin:0 auto}
+.card{background:white;border-radius:16px;padding:25px;box-shadow:0 10px 40px rgba(0,0,0,0.2);margin-bottom:20px}
+h1{color:#667eea;font-size:28px;margin:0 0 5px 0}
+h1:before{content:'🧺';margin-right:10px}
+.subtitle{color:#666;margin-bottom:20px;font-size:14px}
+.badge{background:#4CAF50;color:white;padding:8px 16px;border-radius:20px;
+       display:inline-block;font-size:14px;margin-bottom:20px}
+.info{background:#f5f5f5;padding:15px;border-radius:8px;margin:15px 0;font-size:14px}
+.info strong{color:#667eea}
+ul{list-style:none;padding:0;margin:15px 0}
+li{padding:12px;background:#f9f9f9;margin:8px 0;border-radius:8px;
+   border-left:4px solid #667eea;font-size:14px}
+.footer{text-align:center;color:rgba(255,255,255,0.8);padding:20px;font-size:12px}
 </style></head><body>
-<div class="status">✅ Android Server Running</div>
-<h1>Quick-Serve Enterprise</h1>
-<p>Share files from your Android device</p>
-<ul><li>Place files in: storage/shared/quick-serve/</li></ul>
+<div class="container">
+  <div class="card">
+    <h1>DropBasket</h1>
+    <div class="subtitle">Termux File Sharing</div>
+    <div class="badge">📱 Android Server Active</div>
+    <div class="info">
+      <strong>📁 Share:</strong> storage/shared/DropBasket/<br>
+      <strong>🌐 Access:</strong> From any WiFi device<br>
+      <strong>🔒 Secure:</strong> Local network only
+    </div>
+    <ul>
+      <li>Drop files in DropBasket to share</li>
+      <li>Use Termux Widget for quick start/stop</li>
+    </ul>
+  </div>
+</div>
+<div class="footer">Quick-Serve Enterprise • Termux Edition</div>
 </body></html>
 HTMLEOF
 
 echo ""
 echo "======================================"
-echo "✅ Android Installation Complete!"
+echo "✅ Termux Installation Complete!"
 echo "======================================"
 echo ""
+echo "📁 DropBasket: ~/storage/shared/DropBasket/"
+echo "🌐 Port: 50080"
+echo ""
 echo "Commands:"
-echo "  qs-start     - Start server"
-echo "  qs-stop      - Stop server"
-echo "  qs-sync IP   - Sync with another device"
+echo "  🚀 qs-start     - Start server"
+echo "  ⏹️  qs-stop      - Stop server"
+echo "  🔄 qs-sync IP   - Sync with device"
 echo ""
-echo "Files: ~/storage/shared/quick-serve/"
-echo "Port: 50080"
+echo "📱 Widgets: Install 'Termux:Widget' app"
+echo "   Then add DropBasket shortcuts to home screen"
 echo ""
-echo "Start now: qs-start"
+echo "🚀 Start now: qs-start"
 echo ""
