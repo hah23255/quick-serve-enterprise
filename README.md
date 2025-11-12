@@ -26,6 +26,16 @@ This fork extends the excellent upstream project with **production-grade enhance
 - Proper 403 Forbidden responses for directory access
 - Submitted to upstream as [Issue #39](https://github.com/joaofl/quick-serve/issues/39)
 
+#### 🧺 Human-Friendly DropBasket Interface
+- **One-command installation** - `curl | bash` for instant setup
+- **~/DropBasket/** folder - Human-friendly name (no technical jargon)
+- **Desktop shortcuts** - Click-to-start with purple gradient basket icon (Linux)
+- **Termux widgets** - Home screen widgets for Android (DropBasket-Start, DropBasket-Stop)
+- **Simple commands** - `qs-start`, `qs-stop`, `qs-sync` (no complex paths)
+- **Auto-sync between devices** - Share files across your network effortlessly
+- **Non-standard ports** - Port 50080 by default (no conflicts)
+- **Installation error handling** - Comprehensive troubleshooting guide
+
 #### 🎨 Professional Custom Error Pages
 - **403 Forbidden** - Professional styled page with purple gradient
 - **404 Not Found** - Professional styled page with pink gradient
@@ -39,6 +49,8 @@ This fork extends the excellent upstream project with **production-grade enhance
 - **Production-ready deployment** - Battle-tested on ARM64 devices
 
 #### 📚 Comprehensive Operational Documentation
+- **[Simple Install Guide](docs/SIMPLE_INSTALL.md)** - One-command setup & DropBasket usage
+- **[Installation Error Handling](INSTALL_GUIDELINES.md)** - Troubleshoot installation issues
 - **[Deployment Guide](docs/DEPLOYMENT.md)** - Complete production setup
 - **[Maintenance Guide](docs/MAINTENANCE.md)** - Weekly/monthly procedures
 - **[Disaster Recovery](docs/DISASTER_RECOVERY.md)** - Emergency protocols
@@ -47,7 +59,8 @@ This fork extends the excellent upstream project with **production-grade enhance
 - **[Bug Report Guide](docs/BUG_REPORT.md)** - Issue reporting template
 
 #### 🔧 Enterprise Tooling
-- Convenience aliases (`qs-start`, `qs-stop`, `qs-status`, `qs-health`)
+- Simple commands (`qs-start`, `qs-stop`, `qs-sync`)
+- One-command installers (install.sh, install-android.sh)
 - Automated health checks
 - Log rotation configuration
 - Service monitoring scripts
@@ -58,6 +71,9 @@ This fork extends the excellent upstream project with **production-grade enhance
 
 | Feature | Upstream | Enterprise Edition |
 |---------|----------|-------------------|
+| **One-command installer** | ❌ Manual build | ✅ curl \| bash instant setup |
+| **Human-friendly interface** | ❌ CLI only | ✅ DropBasket folder + desktop shortcuts |
+| **Quick commands** | ❌ Full binary path | ✅ qs-start, qs-stop, qs-sync |
 | **Custom error pages** | ❌ Generic | ✅ Professional styled (403/404/500) |
 | **Directory crash bug** | ❌ Crashes | ✅ Fixed & handles gracefully |
 | **Android/Termux docs** | ❌ Basic | ✅ Complete production guides |
@@ -98,7 +114,42 @@ This **Enterprise Edition** takes the original concept and adds production-ready
 
 ## Installation
 
-### Option 1: Enterprise Edition (Recommended)
+### 🚀 Quick Install (Recommended)
+
+**One-command installation with DropBasket setup:**
+
+#### Linux / Ubuntu / Debian
+```bash
+curl -sSL https://raw.githubusercontent.com/hah23255/quick-serve-enterprise/main/install.sh | bash
+```
+
+#### Termux on Android
+```bash
+curl -sSL https://raw.githubusercontent.com/hah23255/quick-serve-enterprise/main/install-android.sh | bash
+```
+
+**What gets installed:**
+- ✅ Quick-serve binary (optimized, headless)
+- ✅ **~/DropBasket/** folder 🧺 (human-friendly name)
+- ✅ Desktop shortcut with icon (Linux)
+- ✅ Termux home screen widgets (Android)
+- ✅ Simple commands: **qs-start**, **qs-stop**, **qs-sync**
+- ✅ Auto-configured on port 50080 (non-standard)
+- ✅ Firewall auto-opened (Linux)
+
+**Installation time:** 2-5 minutes | **Disk space:** ~100MB
+
+📖 **Quick Start Guide:** [docs/SIMPLE_INSTALL.md](docs/SIMPLE_INSTALL.md)
+🔧 **Error Handling:** [INSTALL_GUIDELINES.md](INSTALL_GUIDELINES.md)
+
+---
+
+### 🔧 Advanced: Manual Build (For Developers)
+
+<details>
+<summary>Click to expand manual build instructions</summary>
+
+#### Option 1: Enterprise Edition Build
 
 **For production deployment with all enterprise features:**
 
@@ -129,9 +180,7 @@ cp ~/tmp/cargo-build/release/quick-serve ./bin/quick-serve
 
 **See [DEPLOYMENT.md](docs/DEPLOYMENT.md) for complete production setup including service management.**
 
----
-
-### Option 2: Upstream Version (Basic Features)
+#### Option 2: Upstream Version (Basic Features)
 
 **For quick testing without enterprise features:**
 
@@ -150,10 +199,39 @@ cargo run --release
 - Directory crash fix
 - Enterprise documentation
 - Android/Termux optimizations
+- DropBasket human-friendly interface
+
+</details>
 
 ---
 
 ## Usage
+
+### 🧺 Simple Commands (After Quick Install)
+
+**Start server (serves ~/DropBasket/ on port 50080):**
+```bash
+qs-start
+# Server running at http://YOUR_IP:50080
+# Access from any device on your network
+```
+
+**Stop server:**
+```bash
+qs-stop
+```
+
+**Sync files from another device:**
+```bash
+qs-sync 192.168.1.120
+# Downloads all files from another DropBasket server
+```
+
+**Share files:** Just copy to ~/DropBasket/ folder 🧺
+
+---
+
+### 🖥️ Advanced Usage
 
 It can be used both headless or for an even more friendly experience, it can be used with a GUI:
 
@@ -162,6 +240,7 @@ It can be used both headless or for an even more friendly experience, it can be 
   <img src="media/screenshoot-dark.png" alt="Screenshot" width="350"/>
 </p>
 
+**Command line options:**
 ```shell
 Options:
       --headless          Headless
@@ -174,6 +253,18 @@ Options:
       --dhcp[=<PORT>]     Start the DHCP server [default port: 6767]
   -h, --help              Print help (see more with '--help')
   -V, --version           Print version
+```
+
+**Examples:**
+```bash
+# Serve on different port
+qs-start 51234
+
+# Use different directory
+quick-serve --headless --http=8080 -d ~/Documents
+
+# Multiple protocols
+quick-serve --headless --http --ftp --tftp -d ~/shared
 ```
 
 ---
