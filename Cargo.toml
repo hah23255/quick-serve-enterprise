@@ -2,7 +2,7 @@
 [package]
 authors = ["João Loureiro", "Hristo Hristov <maintainer@ccvs.tech>"]
 name = "quick-serve-enterprise"
-version = "0.3.1"
+version = "0.3.2"
 edition = "2021"
 license = "MIT"
 repository = "https://github.com/hah23255/quick-serve-enterprise"
@@ -55,7 +55,7 @@ sha2 = "^0.10"
 
 # For the gui version
 egui = {version = "^0.33", optional = true}
-eframe = {version = "^0.32", features = ["wayland"], optional = true}
+eframe = {version = "^0.33", features = ["wayland"], optional = true}
 rfd = {version = "^0.15", optional = true}
 
 [dev-dependencies]

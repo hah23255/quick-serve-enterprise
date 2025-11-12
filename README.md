@@ -67,7 +67,7 @@ This fork extends the excellent upstream project with **production-grade enhance
 | **Maintenance guides** | ❌ None | ✅ Scheduled procedures (weekly/monthly) |
 | **Build workarounds** | ❌ Standard | ✅ Android noexec handling |
 
-**Upstream Project:** [joaofl/quick-serve v0.3.1](https://github.com/joaofl/quick-serve)
+**Upstream Project:** [joaofl/quick-serve v0.3.2](https://github.com/joaofl/quick-serve)
 
 ---
 
@@ -332,7 +332,7 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines on:
 
 **Original Author:** João Loureiro
 **Repository:** [github.com/joaofl/quick-serve](https://github.com/joaofl/quick-serve)
-**Version:** Based on v0.3.1
+**Version:** Based on v0.3.2
 
 **Feature Requests:** Please direct general feature requests to the upstream project.
 **Bug Fixes:** Critical bugs discovered here are submitted upstream (e.g., Issue #39).
