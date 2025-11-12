@@ -41,7 +41,7 @@ async fn main() {
     // Define the channel used to control the servers
     let channel: DefaultChannel<CommandMsg> = Default::default();
 
-    log::set_boxed_logger(logger).unwrap();
+    log::set_boxed_logger(logger).expect("Failed to initialize logger - application cannot start");
     log::set_max_level(LevelFilter::Trace); // Set the maximum log level
 
 

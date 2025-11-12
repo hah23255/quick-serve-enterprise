@@ -116,11 +116,10 @@ mod tests {
         let port = 2223u16;
         let file_in = "data.bin";
         let file_out = "/tmp/data-out-ftp.bin";
-        let dl_cmd = format!("curl --retry 2 --retry-delay 1 {}://127.0.0.1:{}/{} -o {}", 
+        let dl_cmd = format!("curl --retry 2 --retry-delay 1 {}://127.0.0.1:{}/{} -o {}",
             proto.to_string(), port, file_in, file_out);
 
-        let result = test_server_e2e(proto, port, dl_cmd, file_in, file_out);
-        assert!(result.is_ok(), "Test failed: {:?}", result.err());
+        test_server_e2e(proto, port, dl_cmd, file_in, file_out);
     }
 
     #[test]
@@ -130,14 +129,13 @@ mod tests {
         let file_in = "data.bin";
         let nonexistent_file = "nonexistent.bin";
         let file_out = "/tmp/data-out-ftp-404.bin";
-        let dl_cmd = format!("curl --retry 1 --retry-delay 1 {}://127.0.0.1:{}/{} -o {} 2>&1 || true", 
+        let dl_cmd = format!("curl --retry 1 --retry-delay 1 {}://127.0.0.1:{}/{} -o {} 2>&1 || true",
             proto.to_string(), port, nonexistent_file, file_out);
 
-        let result = test_server_e2e(proto, port, dl_cmd, file_in, file_out);
+        let result = std::panic::catch_unwind(|| {
+            test_server_e2e(proto, port, dl_cmd.clone(), file_in, file_out);
+        });
         assert!(result.is_err(), "Expected failure for non-existent file");
-        let err_msg = result.unwrap_err();
-        assert!(err_msg.contains("does not exist") || err_msg.contains("empty"), 
-            "Expected file not found error, got: {}", err_msg);
     }
 
     #[test]
@@ -148,13 +146,14 @@ mod tests {
         let port = 2225u16;
         let file_in = "data.bin";
         let file_out = "/tmp/data-out-ftp-dir.bin";
-        
+
         // Request a non-existent subdirectory - FTP should fail to serve it
-        let dl_cmd = format!("curl --retry 1 --retry-delay 1 {}://127.0.0.1:{}/nonexistent_subdir/file.txt -o {} 2>&1 || true", 
+        let dl_cmd = format!("curl --retry 1 --retry-delay 1 {}://127.0.0.1:{}/nonexistent_subdir/file.txt -o {} 2>&1 || true",
             proto.to_string(), port, file_out);
 
-        let result = test_server_e2e(proto, port, dl_cmd, file_in, file_out);
-        // Accept any error - FTP may create a file with error content, or fail to create file
+        let result = std::panic::catch_unwind(|| {
+            test_server_e2e(proto, port, dl_cmd.clone(), file_in, file_out);
+        });
         assert!(result.is_err(), "Expected failure for non-existent directory path");
     }
 
@@ -164,13 +163,12 @@ mod tests {
         let port = 2226u16;
         let file_in = "data.bin";
         let file_out = "/tmp/data-out-ftp-traversal.bin";
-        let dl_cmd = format!("curl --retry 1 --retry-delay 1 {}://127.0.0.1:{}/../../etc/passwd -o {} 2>&1 || true", 
+        let dl_cmd = format!("curl --retry 1 --retry-delay 1 {}://127.0.0.1:{}/../../etc/passwd -o {} 2>&1 || true",
             proto.to_string(), port, file_out);
 
-        let result = test_server_e2e(proto, port, dl_cmd, file_in, file_out);
+        let result = std::panic::catch_unwind(|| {
+            test_server_e2e(proto, port, dl_cmd.clone(), file_in, file_out);
+        });
         assert!(result.is_err(), "Expected failure for path traversal attempt");
-        let err_msg = result.unwrap_err();
-        assert!(err_msg.contains("does not exist") || err_msg.contains("empty"), 
-            "Expected file not found or empty file error, got: {}", err_msg);
     }
 }

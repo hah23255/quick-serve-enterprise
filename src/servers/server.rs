@@ -70,7 +70,7 @@ impl Default for Server {
             sender: broadcast::channel(10).0,
             protocol: Protocol::default(),
             path: Arc::new(PathBuf::default()),
-            bind_address: IpAddr::from_str("127.0.0.1").unwrap(),
+            bind_address: IpAddr::from_str("127.0.0.1").expect("Hardcoded localhost IP is invalid - bug in code"),
             port: 0,
         }
     }
@@ -232,7 +232,7 @@ pub fn server_starter_sender(cli_args: &Cli, channel: &DefaultChannel<CommandMsg
     // messages accordingly to start each
     if cli_args.http.is_some() {
         cmd.protocol = Protocol::Http;
-        cmd.port = cli_args.http.unwrap() as u16;
+        cmd.port = cli_args.http.expect("Clap should set HTTP port") as u16;
         if let Err(e) = channel.sender.send(cmd.clone()) {
             error!("Failed to send HTTP start command: {}", e);
         }
@@ -241,7 +241,7 @@ pub fn server_starter_sender(cli_args: &Cli, channel: &DefaultChannel<CommandMsg
 
     if cli_args.ftp.is_some() {
         cmd.protocol = Protocol::Ftp;
-        cmd.port = cli_args.ftp.unwrap() as u16;
+        cmd.port = cli_args.ftp.expect("Clap should set FTP port") as u16;
         if let Err(e) = channel.sender.send(cmd.clone()) {
             error!("Failed to send FTP start command: {}", e);
         }
@@ -250,7 +250,7 @@ pub fn server_starter_sender(cli_args: &Cli, channel: &DefaultChannel<CommandMsg
 
     if cli_args.tftp.is_some() {
         cmd.protocol = Protocol::Tftp;
-        cmd.port = cli_args.tftp.unwrap() as u16;
+        cmd.port = cli_args.tftp.expect("Clap should set TFTP port") as u16;
         if let Err(e) = channel.sender.send(cmd.clone()) {
             error!("Failed to send TFTP start command: {}", e);
         }
@@ -259,7 +259,7 @@ pub fn server_starter_sender(cli_args: &Cli, channel: &DefaultChannel<CommandMsg
 
     if cli_args.dhcp.is_some() {
         cmd.protocol = Protocol::Dhcp;
-        cmd.port = cli_args.dhcp.unwrap() as u16;
+        cmd.port = cli_args.dhcp.expect("Clap should set DHCP port") as u16;
         if let Err(e) = channel.sender.send(cmd.clone()) {
             error!("Failed to send DHCP start command: {}", e);
         }
