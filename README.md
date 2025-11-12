@@ -1,7 +1,8 @@
-[![Build Status](https://github.com/hah23255/quick-serve-enterprise/actions/workflows/rust.yml/badge.svg)](https://github.com/hah23255/quick-serve-enterprise/actions/workflows/rust.yml)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
-[![Platform](https://img.shields.io/badge/platform-Android%20%7C%20Termux%20%7C%20Linux-green.svg)]()
-[![Rust](https://img.shields.io/badge/rust-1.70%2B-orange.svg)]()
+[![Build Status](https://github.com/hah23255/quick-serve-enterprise/actions/workflows/rust.yml/badge.svg?style=for-the-badge)](https://github.com/hah23255/quick-serve-enterprise/actions/workflows/rust.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow?style=for-the-badge&logo=opensourceinitiative&logoColor=white)](LICENSE)
+[![Platform](https://img.shields.io/badge/Platform-Android%20%7C%20Termux%20%7C%20Linux-28A745?style=for-the-badge&logo=linux&logoColor=white)]()
+[![Rust](https://img.shields.io/badge/Rust-1.70%2B-orange?style=for-the-badge&logo=rust&logoColor=white)](https://www.rust-lang.org)
+[![PRs Welcome](https://img.shields.io/badge/PRs-Welcome-brightgreen?style=for-the-badge)](CONTRIBUTING.md)
 
 <p align="center">
   <p align="center"> <img src="media/logo.png" alt="Logo" width="500"/> </p>
@@ -101,6 +102,140 @@ This fork extends the excellent upstream project with **production-grade enhance
 - [Contributing](#-contributing)
 - [Contact & Support](#-contact--support)
 - [License](#-license)
+
+---
+
+## 🏗️ Architecture
+
+### System Overview
+
+```mermaid
+graph TB
+    subgraph "Client Layer"
+        A[HTTP Client] --> B[Request]
+    end
+
+    subgraph "Quick-Serve Enterprise Server"
+        B --> C{Router}
+
+        C -->|Static File| D[File Server]
+        C -->|Directory| E[Directory Handler]
+        C -->|Not Found| F[404 Handler]
+
+        D --> G{File Exists?}
+        G -->|Yes| H[Serve File]
+        G -->|No| F
+
+        E --> I{Has index.html?}
+        I -->|Yes| H
+        I -->|No| J[403 Handler]
+
+        H --> K[Response 200]
+        F --> L[Custom 404 Page]
+        J --> M[Custom 403 Page]
+    end
+
+    subgraph "Response Layer"
+        K --> N[Client Receives File]
+        L --> O[Client Sees Styled Error]
+        M --> O
+    end
+
+    style H fill:#28A745
+    style L fill:#E83E8C
+    style M fill:#7C3AED
+```
+
+### Request Flow with Error Handling
+
+```mermaid
+sequenceDiagram
+    participant Client
+    participant Router
+    participant FileSystem
+    participant ErrorHandler
+
+    Client->>Router: HTTP GET /path/file.html
+    Router->>FileSystem: Check file exists
+
+    alt File Exists
+        FileSystem-->>Router: File found
+        Router-->>Client: 200 OK + file content
+    else File Not Found
+        FileSystem-->>Router: Not found
+        Router->>ErrorHandler: Trigger 404
+        ErrorHandler-->>Client: 404 + Custom styled page
+    else Directory Without Index
+        FileSystem-->>Router: Directory found
+        Router->>FileSystem: Check index.html
+        FileSystem-->>Router: No index
+        Router->>ErrorHandler: Trigger 403
+        ErrorHandler-->>Client: 403 + Custom styled page
+    end
+```
+
+### Service Management (runit Integration)
+
+```mermaid
+graph LR
+    subgraph "Startup"
+        A[System Boot] --> B[runit Supervisor]
+        B --> C[quick-serve Service]
+    end
+
+    subgraph "Monitoring"
+        C --> D{Health Check}
+        D -->|Healthy| E[Continue Running]
+        D -->|Crashed| F[Auto Restart]
+        F --> C
+    end
+
+    subgraph "Control"
+        G[qs-start] --> B
+        H[qs-stop] --> I[Stop Service]
+        J[qs-sync] --> K[Sync Files]
+    end
+
+    E --> L[Serve Requests]
+
+    style C fill:#00FF41
+    style F fill:#FFC107
+    style L fill:#28A745
+```
+
+### Android/Termux Deployment
+
+```mermaid
+graph TB
+    subgraph "Android Device"
+        A[Termux App] --> B[Install Script]
+
+        B --> C[Create ~/DropBasket/]
+        B --> D[Install Binary]
+        B --> E[Setup runit Service]
+        B --> F[Create Widgets]
+
+        C --> G[User Files]
+        D --> H[quick-serve Binary]
+        E --> I[Auto-start on Boot]
+        F --> J[Home Screen Control]
+
+        G --> K[Port 50080]
+        H --> K
+        I --> K
+
+        K --> L[Network Access]
+    end
+
+    subgraph "Network"
+        L --> M[Local: localhost:50080]
+        L --> N[Network: 192.168.x.x:50080]
+    end
+
+    style C fill:#28A745
+    style K fill:#00FF41
+    style M fill:#17A2B8
+```
 
 ---
 
