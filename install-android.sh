@@ -35,8 +35,26 @@ fi
 echo "Building (takes 3-5 minutes on mobile)..."
 cargo build --release --no-default-features --bin quick-serve
 
+# Detect actual target directory (handles custom .cargo/config.toml)
+echo "Detecting build location..."
+if command -v jq &> /dev/null; then
+    TARGET_DIR=$(cargo metadata --format-version 1 2>/dev/null | jq -r '.target_directory' || echo "target")
+else
+    # Fallback: check .cargo/config.toml
+    if [ -f ".cargo/config.toml" ]; then
+        TARGET_DIR=$(grep "target-dir" .cargo/config.toml | sed 's/.*"\(.*\)".*/\1/' | head -1)
+        if [ -z "$TARGET_DIR" ]; then
+            TARGET_DIR="target"
+        fi
+    else
+        TARGET_DIR="target"
+    fi
+fi
+
+echo "Build location: $TARGET_DIR"
+
 # Install
-cp target/release/quick-serve $PREFIX/bin/
+cp "$TARGET_DIR/release/quick-serve" $PREFIX/bin/
 chmod +x $PREFIX/bin/quick-serve
 
 # Create data directory
