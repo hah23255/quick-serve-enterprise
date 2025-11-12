@@ -3,7 +3,7 @@
 
 [build]
 # Use system temp directory (executable location)
-target-dir = "/data/data/com.termux/files/usr/tmp/cargo-build-quick-serve"
+target-dir = "/tmp/cargo-build-quick-serve"
 
 [term]
 verbose = false
