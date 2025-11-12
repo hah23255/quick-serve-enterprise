@@ -131,24 +131,42 @@ echo "✅ Sync complete"
 EOF
 chmod +x $HOME/qs-sync
 
-# Create desktop shortcut (Linux only)
+# Create desktop shortcuts (Linux only)
 if [ "$PLATFORM" = "linux" ] && [ -d "$HOME/Desktop" ]; then
-    echo "Creating desktop shortcut..."
-    cat > $HOME/Desktop/dropbasket.desktop << 'DESKTOPEOF'
+    echo "Creating desktop shortcuts..."
+
+    # Shortcut 1: Start DropBasket Server
+    cat > $HOME/Desktop/start-dropbasket.desktop << 'STARTEOF'
 [Desktop Entry]
 Version=1.0
 Type=Application
-Name=DropBasket
-Comment=Quick file sharing server
+Name=Start DropBasket
+Comment=Start DropBasket file sharing server
 Exec=bash -c '$HOME/qs-start; read -p "Press Enter to close..."'
-Icon=folder-publicshare
+Icon=media-playback-start
 Terminal=true
 Categories=Network;FileTransfer;
-DESKTOPEOF
-    chmod +x $HOME/Desktop/dropbasket.desktop
+STARTEOF
+    chmod +x $HOME/Desktop/start-dropbasket.desktop
 
+    # Shortcut 2: Open DropBasket Folder
+    cat > $HOME/Desktop/dropbasket-folder.desktop << 'FOLDEREOF'
+[Desktop Entry]
+Version=1.0
+Type=Application
+Name=DropBasket Folder
+Comment=Open DropBasket folder to drop files for sharing
+Exec=xdg-open $HOME/DropBasket
+Icon=folder-drag-accept
+Terminal=false
+Categories=Network;FileTransfer;Utility;
+FOLDEREOF
+    chmod +x $HOME/Desktop/dropbasket-folder.desktop
+
+    # Install to applications menu
     mkdir -p $HOME/.local/share/applications
-    cp $HOME/Desktop/dropbasket.desktop $HOME/.local/share/applications/
+    cp $HOME/Desktop/start-dropbasket.desktop $HOME/.local/share/applications/
+    cp $HOME/Desktop/dropbasket-folder.desktop $HOME/.local/share/applications/
 fi
 
 # Open firewall (Linux only)
@@ -216,7 +234,9 @@ echo "  ⏹️  qs-stop      - Stop server"
 echo "  🔄 qs-sync IP   - Sync with device"
 echo ""
 if [ "$PLATFORM" = "linux" ] && [ -d "$HOME/Desktop" ]; then
-    echo "🖥️  Desktop shortcut created!"
+    echo "🖥️  Desktop shortcuts created!"
+    echo "   • Start DropBasket - Launch the server"
+    echo "   • DropBasket Folder - Open folder to drop files"
     echo ""
 fi
 echo "🚀 Start now: qs-start"
