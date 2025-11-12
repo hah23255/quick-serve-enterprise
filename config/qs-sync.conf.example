@@ -51,5 +51,22 @@ CHECKSUM_LARGE_FILE_THRESHOLD=104857600  # 100MB threshold for partial checksums
 
 # Conflict Resolution Strategy
 CONFLICT_STRATEGY="NEWEST_WINS"       # NEWEST_WINS (auto), BACKUP_BOTH, LOCAL_WINS, REMOTE_WINS
-CONFLICT_BACKUP_SUFFIX=".qs-sync-conflict-{timestamp}-{host}"
 REQUIRE_SSH_FOR_SYNC=true             # true = error if SSH unavailable (recommended)
+
+# Phase 3: Conflict Backups
+CREATE_CONFLICT_BACKUPS=true          # Create backup of losing version (file-conflict-TIMESTAMP-HOST.ext)
+MAX_CONFLICT_AGE_DAYS=30              # Auto-delete conflict backups older than N days
+ENABLE_CONFLICT_CLEANUP=true          # Enable automatic cleanup of old conflict backups
+ENABLE_REMOTE_CLEANUP=true            # Also cleanup conflict backups on remote host
+
+# Phase 3: Lock File
+LOCK_FILE="$DATA_DIR/sync.lock"       # Lock file location
+LOCK_TIMEOUT=0                        # Seconds to wait for lock (0 = non-blocking, exit if locked)
+
+# Phase 3: Deletion Sync (DISABLED by default for safety)
+ENABLE_DELETION_SYNC=false            # Enable deletion propagation (DANGEROUS!)
+DELETION_STRATEGY="trash"             # Options: trash, hard, disabled
+TRASH_DIR="$DATA_DIR/trash"           # Trash directory location
+TRASH_MAX_AGE_DAYS=30                 # Auto-delete trash after N days
+DELETION_SAFETY_THRESHOLD=100         # Abort if >N deletions detected (prevents accidents)
+ENABLE_TRASH_CLEANUP=true             # Enable automatic trash cleanup

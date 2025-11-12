@@ -276,6 +276,67 @@ init_qs_sync() {
 }
 
 # ============================================================================
+# LOCK FILE MANAGEMENT (Phase 3)
+# ============================================================================
+
+# Global lock file descriptor
+LOCK_FD=200
+
+# Acquire exclusive lock to prevent concurrent sync runs
+acquire_lock() {
+    local lock_file="$DATA_DIR/sync.lock"
+    local lock_timeout="${LOCK_TIMEOUT:-0}"  # 0 = non-blocking
+
+    log_debug "Attempting to acquire lock: $lock_file"
+
+    # Create data directory if doesn't exist
+    mkdir -p "$DATA_DIR" 2>/dev/null
+
+    # Open lock file for writing (create if doesn't exist)
+    eval "exec $LOCK_FD>\"$lock_file\"" 2>/dev/null || {
+        log_error "Failed to open lock file: $lock_file"
+        return 1
+    }
+
+    # Try to acquire exclusive lock (non-blocking by default)
+    if [[ $lock_timeout -eq 0 ]]; then
+        # Non-blocking mode
+        if ! flock -n $LOCK_FD 2>/dev/null; then
+            log_warn "Another qs-sync instance is already running"
+            log_info "Lock file: $lock_file"
+            log_info "If stale, remove with: rm \"$lock_file\""
+            exit 0  # Exit gracefully (expected for overlapping cron jobs)
+        fi
+    else
+        # Blocking mode with timeout
+        if ! flock -w $lock_timeout $LOCK_FD 2>/dev/null; then
+            log_error "Failed to acquire lock after ${lock_timeout}s timeout"
+            log_info "Another instance may be running or hung"
+            exit 1
+        fi
+    fi
+
+    # Write current PID to lock file for debugging
+    echo "$$" >&$LOCK_FD
+
+    log_debug "Lock acquired successfully (PID: $$)"
+    return 0
+}
+
+# Release lock file (called automatically on exit)
+release_lock() {
+    log_debug "Releasing lock (PID: $$)"
+
+    # Close lock file descriptor (releases flock automatically)
+    eval "exec $LOCK_FD>&-" 2>/dev/null || true
+
+    return 0
+}
+
+# Setup trap to ensure lock is always released
+trap release_lock EXIT INT TERM
+
+# ============================================================================
 # STATE DATABASE MANAGEMENT (Phase 2)
 # ============================================================================
 
@@ -669,7 +730,7 @@ detect_conflicts() {
     return $conflict_count
 }
 
-# Resolve conflict using NEWEST_WINS strategy
+# Resolve conflict using NEWEST_WINS strategy (Phase 3: with backup)
 resolve_conflict() {
     local path="$1"
     local conflict_type="$2"
@@ -686,17 +747,489 @@ resolve_conflict() {
     [[ -n "$local_data" ]] && local_mtime=$(echo "$local_data" | cut -d'|' -f2)
     [[ -n "$remote_data" ]] && remote_mtime=$(echo "$remote_data" | cut -d'|' -f2)
 
-    # Compare mtimes and decide winner
+    # Determine winner and loser
+    local winner=""
+    local loser=""
+    local loser_host=""
+
     if [[ $local_mtime -gt $remote_mtime ]]; then
-        log_info "Conflict resolution: $path -> LOCAL wins (newer)"
-        echo "LOCAL"
+        winner="LOCAL"
+        loser="REMOTE"
+        loser_host="$REMOTE_HOST"
     elif [[ $remote_mtime -gt $local_mtime ]]; then
-        log_info "Conflict resolution: $path -> REMOTE wins (newer)"
-        echo "REMOTE"
+        winner="REMOTE"
+        loser="LOCAL"
+        loser_host="$(hostname)"
     else
         # Same mtime (unlikely) - prefer local
-        log_info "Conflict resolution: $path -> LOCAL wins (same mtime)"
-        echo "LOCAL"
+        winner="LOCAL"
+        loser="REMOTE"
+        loser_host="$REMOTE_HOST"
+    fi
+
+    # Create conflict backup if enabled (Phase 3)
+    if [[ "${CREATE_CONFLICT_BACKUPS:-true}" == true ]]; then
+        create_conflict_backup "$path" "$loser" "$loser_host" "$winner"
+    fi
+
+    log_info "Conflict resolution: $path -> $winner wins (newer)"
+    echo "$winner"
+
+    return 0
+}
+
+# Create backup of losing version in conflict (Phase 3)
+create_conflict_backup() {
+    local path="$1"
+    local loser="$2"       # LOCAL or REMOTE
+    local loser_host="$3"
+    local winner="$4"
+
+    local timestamp=$(date +%Y%m%d-%H%M%S)
+    local file_dir=$(dirname "$path")
+    local file_name=$(basename "$path")
+    local file_base="${file_name%.*}"
+    local file_ext="${file_name##*.}"
+
+    # Handle files without extension
+    if [[ "$file_base" == "$file_name" ]]; then
+        file_ext=""
+        file_base="$file_name"
+    fi
+
+    # Construct backup filename: file-conflict-20251112-143022-hostname.ext
+    local backup_name="${file_base}-conflict-${timestamp}-${loser_host}"
+    [[ -n "$file_ext" && "$file_ext" != "$file_name" ]] && backup_name="${backup_name}.${file_ext}"
+
+    local backup_path="${file_dir}/${backup_name}"
+
+    log_debug "Creating conflict backup: $backup_path (loser: $loser)"
+
+    # Determine source and destination
+    if [[ "$loser" == "LOCAL" ]]; then
+        local source_file="$LOCAL_PATH/$path"
+        local dest_file="$LOCAL_PATH/$backup_path"
+        local dest_dir="$LOCAL_PATH/$file_dir"
+
+        # Create directory if needed
+        mkdir -p "$dest_dir" 2>/dev/null
+
+        # Copy losing version to backup
+        if [[ -f "$source_file" ]]; then
+            cp -p "$source_file" "$dest_file" 2>/dev/null || {
+                log_warn "Failed to create conflict backup: $backup_path"
+                return 1
+            }
+            log_info "Created conflict backup: $backup_path"
+        else
+            log_debug "Source file not found for backup: $source_file"
+            return 1
+        fi
+    else
+        # Remote backup - copy remote file locally first, then to backup location
+        local source_file="$REMOTE_PATH/$path"
+        local dest_file="$LOCAL_PATH/$backup_path"
+        local dest_dir="$LOCAL_PATH/$file_dir"
+        local temp_file="/tmp/qs-sync-conflict-backup-$$-$(date +%s).tmp"
+
+        # Create directory if needed
+        mkdir -p "$dest_dir" 2>/dev/null
+
+        # Pull remote file to temp, then move to backup location
+        local escaped_source=$(printf %q "$source_file")
+        if scp -P "$SSH_PORT" -q "$REMOTE_USER@$REMOTE_HOST:$escaped_source" "$temp_file" 2>/dev/null; then
+            mv "$temp_file" "$dest_file" && \
+                log_info "Created conflict backup: $backup_path (from remote)" || {
+                log_warn "Failed to create remote conflict backup: $backup_path"
+                rm -f "$temp_file"
+                return 1
+            }
+        else
+            log_warn "Failed to retrieve remote file for backup: $path"
+            rm -f "$temp_file"
+            return 1
+        fi
+    fi
+
+    # Log to conflict log
+    echo "$(date +%Y-%m-%d\ %H:%M:%S) BACKUP $backup_path ($loser lost to $winner)" >> "$CONFLICT_LOG"
+
+    return 0
+}
+
+# Cleanup old conflict backups (Phase 3)
+cleanup_old_conflicts() {
+    local max_age_days="${MAX_CONFLICT_AGE_DAYS:-30}"
+
+    log_info "Cleaning up conflict backups older than $max_age_days days"
+
+    local count=0
+
+    # Local cleanup
+    if [[ -d "$LOCAL_PATH" ]]; then
+        while IFS= read -r -d '' file; do
+            rm -f "$file" 2>/dev/null && ((count++))
+            log_debug "Deleted old conflict backup: $(basename "$file")"
+        done < <(find "$LOCAL_PATH" -type f -name "*-conflict-*" -mtime +$max_age_days -print0 2>/dev/null)
+    fi
+
+    # Remote cleanup (via SSH) - only if connection available
+    if [[ "$CONNECTION_MODE" == "ssh" ]] && [[ "${ENABLE_REMOTE_CLEANUP:-true}" == true ]]; then
+        local remote_count
+        remote_count=$(ssh -p "$SSH_PORT" "$REMOTE_USER@$REMOTE_HOST" \
+            "find '$REMOTE_PATH' -type f -name '*-conflict-*' -mtime +$max_age_days -delete -print 2>/dev/null | wc -l" 2>/dev/null)
+        count=$((count + remote_count))
+    fi
+
+    if [[ $count -gt 0 ]]; then
+        log_info "Cleaned up $count old conflict backup(s)"
+    else
+        log_debug "No old conflict backups to clean up"
+    fi
+
+    return 0
+}
+
+# ============================================================================
+# DELETION SYNC & TRASH MANAGEMENT (Phase 3)
+# ============================================================================
+
+# Validate deletion safety threshold
+validate_deletion_safety() {
+    local delete_count=0
+
+    # Count local deletions
+    for path in "${!CHANGES_LOCAL[@]}"; do
+        [[ "${CHANGES_LOCAL[$path]}" == "DELETE" ]] && ((delete_count++))
+    done
+
+    # Count remote deletions
+    for path in "${!CHANGES_REMOTE[@]}"; do
+        [[ "${CHANGES_REMOTE[$path]}" == "DELETE" ]] && ((delete_count++))
+    done
+
+    local threshold="${DELETION_SAFETY_THRESHOLD:-100}"
+
+    if [[ $delete_count -gt $threshold ]]; then
+        log_error "SAFETY ABORT: $delete_count deletions detected (threshold: $threshold)"
+        log_error "This may indicate a configuration error or accidental mass deletion"
+        log_error "Review changes with: qs-sync status"
+        log_error "To proceed anyway, increase DELETION_SAFETY_THRESHOLD in config"
+        return 1
+    fi
+
+    if [[ $delete_count -gt 0 ]]; then
+        log_warn "Deletion sync: $delete_count file(s) will be deleted/trashed"
+    fi
+
+    return 0
+}
+
+# Move file to trash instead of deleting
+move_to_trash() {
+    local path="$1"
+    local location="$2"  # LOCAL or REMOTE
+
+    # Create trash batch directory with timestamp
+    local trash_batch="${TRASH_DIR:-$DATA_DIR/trash}/$(date +%Y%m%d-%H%M%S)"
+    local trash_path="$trash_batch/$path"
+    local trash_dir=$(dirname "$trash_path")
+
+    log_debug "Moving to trash: $path ($location)"
+
+    # Create trash directory structure
+    mkdir -p "$trash_dir" 2>/dev/null || {
+        log_error "Failed to create trash directory: $trash_dir"
+        return 1
+    }
+
+    # Move file to trash
+    if [[ "$location" == "LOCAL" ]]; then
+        local source_file="$LOCAL_PATH/$path"
+        if [[ -f "$source_file" ]]; then
+            mv "$source_file" "$trash_path" 2>/dev/null || {
+                log_error "Failed to move to trash: $path"
+                return 1
+            }
+            log_info "Moved to trash: $path"
+        else
+            log_debug "File not found for trash: $source_file"
+            return 0  # Not an error - file already gone
+        fi
+    else
+        # Remote trash - copy to local trash then delete remote
+        local source_file="$REMOTE_PATH/$path"
+        local temp_file="/tmp/qs-sync-trash-$$-$(date +%s).tmp"
+
+        # Pull remote file to local trash
+        local escaped_source=$(printf %q "$source_file")
+        if scp -P "$SSH_PORT" -q "$REMOTE_USER@$REMOTE_HOST:$escaped_source" "$temp_file" 2>/dev/null; then
+            mv "$temp_file" "$trash_path" 2>/dev/null && \
+            ssh -p "$SSH_PORT" "$REMOTE_USER@$REMOTE_HOST" "rm -f $escaped_source" 2>/dev/null && \
+                log_info "Moved remote file to trash: $path" || {
+                log_error "Failed to trash remote file: $path"
+                rm -f "$temp_file"
+                return 1
+            }
+        else
+            log_debug "Remote file not found for trash: $path"
+            rm -f "$temp_file"
+            return 0  # Not an error - file already gone
+        fi
+    fi
+
+    return 0
+}
+
+# Handle deletion safely (trash or hard delete)
+handle_deletion_safe() {
+    local path="$1"
+    local location="$2"  # LOCAL or REMOTE
+    local strategy="${DELETION_STRATEGY:-trash}"
+
+    log_debug "Handling deletion: $path ($location, strategy=$strategy)"
+
+    case "$strategy" in
+        disabled)
+            log_debug "Deletion sync disabled, skipping: $path"
+            return 0
+            ;;
+
+        trash)
+            # Move to trash instead of deleting
+            move_to_trash "$path" "$location"
+            return $?
+            ;;
+
+        hard)
+            # Hard delete (dangerous!)
+            log_warn "HARD DELETE: $path ($location)"
+            if [[ "$location" == "LOCAL" ]]; then
+                rm -f "$LOCAL_PATH/$path" 2>/dev/null || {
+                    log_error "Failed to delete local file: $path"
+                    return 1
+                }
+            else
+                local escaped_file=$(printf %q "$REMOTE_PATH/$path")
+                ssh -p "$SSH_PORT" "$REMOTE_USER@$REMOTE_HOST" "rm -f $escaped_file" 2>/dev/null || {
+                    log_error "Failed to delete remote file: $path"
+                    return 1
+                }
+            fi
+            log_info "Hard deleted: $path ($location)"
+            return 0
+            ;;
+
+        *)
+            log_error "Unknown deletion strategy: $strategy"
+            return 1
+            ;;
+    esac
+}
+
+# Cleanup old trash (auto-delete after retention period)
+cleanup_trash() {
+    local max_age_days="${TRASH_MAX_AGE_DAYS:-30}"
+    local trash_dir="${TRASH_DIR:-$DATA_DIR/trash}"
+
+    log_info "Cleaning up trash older than $max_age_days days"
+
+    if [[ ! -d "$trash_dir" ]]; then
+        log_debug "Trash directory does not exist: $trash_dir"
+        return 0
+    fi
+
+    local count=0
+    # Delete entire trash batch directories older than threshold
+    while IFS= read -r -d '' batch_dir; do
+        rm -rf "$batch_dir" 2>/dev/null && ((count++))
+        log_debug "Deleted trash batch: $(basename "$batch_dir")"
+    done < <(find "$trash_dir" -mindepth 1 -maxdepth 1 -type d -mtime +$max_age_days -print0 2>/dev/null)
+
+    if [[ $count -gt 0 ]]; then
+        log_info "Cleaned up $count trash batch(es)"
+    else
+        log_debug "No old trash batches to clean up"
+    fi
+
+    return 0
+}
+
+# ============================================================================
+# AUTOMATION & SCHEDULING (Phase 3)
+# ============================================================================
+
+# Install cron job for automated sync
+install_cron_job() {
+    local interval="${1:-15}"  # Default: 15 minutes
+
+    log_info "Installing cron job (every $interval minutes)"
+
+    # Check if cron is available
+    if ! command -v crontab >/dev/null 2>&1; then
+        log_error "crontab command not found. Install with: sudo apt install cron"
+        return 1
+    fi
+
+    # Create cron entry
+    local cron_entry="*/$interval * * * * $SCRIPT_DIR/$SCRIPT_NAME --quiet 2>&1 | logger -t qs-sync"
+
+    # Check if entry already exists
+    if crontab -l 2>/dev/null | grep -q "qs-sync"; then
+        log_warn "Cron job already exists. Remove first with: $SCRIPT_NAME unschedule"
+        return 1
+    fi
+
+    # Install to user crontab
+    (crontab -l 2>/dev/null; echo "$cron_entry") | crontab - || {
+        log_error "Failed to install cron job"
+        return 1
+    }
+
+    log_info "✓ Cron job installed: Every $interval minutes"
+    log_info "  View: crontab -l | grep qs-sync"
+    log_info "  Logs: journalctl -t qs-sync"
+    log_info "  Remove: $SCRIPT_NAME unschedule"
+
+    return 0
+}
+
+# Install systemd timer for automated sync
+install_systemd_timer() {
+    local interval="${1:-15}"  # Default: 15 minutes
+    local user_mode="${2:-true}"  # true = user service, false = system service
+
+    log_info "Installing systemd timer (every $interval minutes)"
+
+    # Check if systemd is available
+    if ! command -v systemctl >/dev/null 2>&1; then
+        log_error "systemd not available. Use cron instead."
+        return 1
+    fi
+
+    # Determine service directory
+    if [[ "$user_mode" == true ]]; then
+        local service_dir="$HOME/.config/systemd/user"
+        local systemctl_cmd="systemctl --user"
+    else
+        local service_dir="/etc/systemd/system"
+        local systemctl_cmd="sudo systemctl"
+    fi
+
+    mkdir -p "$service_dir" 2>/dev/null || {
+        log_error "Failed to create service directory: $service_dir"
+        return 1
+    }
+
+    # Create service unit
+    cat > "$service_dir/qs-sync.service" <<EOF
+[Unit]
+Description=qs-sync Bidirectional File Synchronization
+Documentation=https://github.com/hah23255/quick-serve-enterprise
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=$SCRIPT_DIR/$SCRIPT_NAME --quiet
+StandardOutput=journal
+StandardError=journal
+TimeoutStartSec=300
+
+# Security hardening
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=default.target
+EOF
+
+    # Create timer unit
+    cat > "$service_dir/qs-sync.timer" <<EOF
+[Unit]
+Description=qs-sync Timer (every $interval minutes)
+Documentation=https://github.com/hah23255/quick-serve-enterprise
+
+[Timer]
+# Run every N minutes
+OnCalendar=*:0/$interval
+
+# Run on boot if missed
+Persistent=true
+
+# Prevent overlaps
+Unit=qs-sync.service
+
+[Install]
+WantedBy=timers.target
+EOF
+
+    # Reload systemd and enable timer
+    $systemctl_cmd daemon-reload || {
+        log_error "Failed to reload systemd"
+        return 1
+    }
+
+    $systemctl_cmd enable --now qs-sync.timer || {
+        log_error "Failed to enable systemd timer"
+        return 1
+    }
+
+    if [[ "$user_mode" == true ]]; then
+        log_info "✓ Systemd user timer enabled"
+        log_info "  Status: systemctl --user status qs-sync.timer"
+        log_info "  Logs: journalctl --user -u qs-sync.service -f"
+        log_info "  Remove: $SCRIPT_NAME unschedule"
+    else
+        log_info "✓ Systemd system timer enabled"
+        log_info "  Status: systemctl status qs-sync.timer"
+        log_info "  Logs: journalctl -u qs-sync.service -f"
+        log_info "  Remove: $SCRIPT_NAME unschedule"
+    fi
+
+    return 0
+}
+
+# Uninstall automation (cron or systemd)
+uninstall_automation() {
+    local removed=false
+
+    log_info "Removing automated sync..."
+
+    # Try to remove cron job
+    if crontab -l 2>/dev/null | grep -q "qs-sync"; then
+        crontab -l 2>/dev/null | grep -v "qs-sync" | crontab - && {
+            log_info "✓ Removed cron job"
+            removed=true
+        }
+    fi
+
+    # Try to remove systemd user timer
+    if systemctl --user list-unit-files 2>/dev/null | grep -q "qs-sync.timer"; then
+        systemctl --user disable --now qs-sync.timer 2>/dev/null && {
+            rm -f "$HOME/.config/systemd/user/qs-sync.service" \
+                  "$HOME/.config/systemd/user/qs-sync.timer" 2>/dev/null
+            systemctl --user daemon-reload 2>/dev/null
+            log_info "✓ Removed systemd user timer"
+            removed=true
+        }
+    fi
+
+    # Try to remove systemd system timer
+    if systemctl list-unit-files 2>/dev/null | grep -q "qs-sync.timer"; then
+        sudo systemctl disable --now qs-sync.timer 2>/dev/null && {
+            sudo rm -f /etc/systemd/system/qs-sync.service \
+                       /etc/systemd/system/qs-sync.timer 2>/dev/null
+            sudo systemctl daemon-reload 2>/dev/null
+            log_info "✓ Removed systemd system timer"
+            removed=true
+        }
+    fi
+
+    if [[ "$removed" == true ]]; then
+        log_info "Automated sync disabled successfully"
+    else
+        log_warn "No automation found to remove"
     fi
 
     return 0
@@ -839,6 +1372,24 @@ sync_execute() {
         return 0
     fi
 
+    # Cleanup old conflict backups (Phase 3)
+    if [[ "${ENABLE_CONFLICT_CLEANUP:-true}" == true ]]; then
+        cleanup_old_conflicts
+    fi
+
+    # Cleanup old trash (Phase 3)
+    if [[ "${ENABLE_TRASH_CLEANUP:-true}" == true ]]; then
+        cleanup_trash
+    fi
+
+    # Validate deletion safety threshold (Phase 3)
+    if [[ "${ENABLE_DELETION_SYNC:-false}" == true ]]; then
+        validate_deletion_safety || {
+            log_error "Sync aborted due to safety threshold"
+            return 1
+        }
+    fi
+
     # Resolve conflicts first
     if [[ ${#CONFLICTS[@]} -gt 0 ]]; then
         log_info "Resolving ${#CONFLICTS[@]} conflicts using NEWEST_WINS strategy"
@@ -902,14 +1453,12 @@ sync_execute() {
                     ;;
 
                 DELETE)
-                    # Delete file on remote (secure escaping)
-                    log_warn "Deleting remote file: $path"
-                    local escaped_remote_file
-                    escaped_remote_file=$(printf %q "$REMOTE_PATH/$path")
-                    ssh -p "$SSH_PORT" "$REMOTE_USER@$REMOTE_HOST" "rm -f $escaped_remote_file" || {
-                        log_error "Failed to delete remote file: $path"
-                        ((errors++))
-                    }
+                    # Handle deletion safely (Phase 3: trash or hard delete)
+                    if [[ "${ENABLE_DELETION_SYNC:-false}" == true ]]; then
+                        handle_deletion_safe "$path" "REMOTE" || ((errors++))
+                    else
+                        log_debug "Deletion sync disabled, skipping remote delete: $path"
+                    fi
                     ;;
             esac
         done
@@ -941,12 +1490,12 @@ sync_execute() {
                     ;;
 
                 DELETE)
-                    # Delete file locally (safe - path properly quoted)
-                    log_warn "Deleting local file: $path"
-                    rm -f "$LOCAL_PATH/$path" || {
-                        log_error "Failed to delete local file: $path"
-                        ((errors++))
-                    }
+                    # Handle deletion safely (Phase 3: trash or hard delete)
+                    if [[ "${ENABLE_DELETION_SYNC:-false}" == true ]]; then
+                        handle_deletion_safe "$path" "LOCAL" || ((errors++))
+                    else
+                        log_debug "Deletion sync disabled, skipping local delete: $path"
+                    fi
                     ;;
             esac
         done
@@ -996,6 +1545,9 @@ MODES:
     conflicts         List unresolved conflicts
     init              Initialize configuration and state database
 
+    schedule [MIN]    Enable automated sync (cron/systemd, default: 15min)
+    unschedule        Disable automated sync
+
 OPTIONS:
     -r, --remote HOST       Remote server hostname or IP
     -u, --user USER         SSH username
@@ -1040,9 +1592,20 @@ parse_arguments() {
     while [[ $# -gt 0 ]]; do
         case "$1" in
             # Modes
-            sync|pull|push|status|conflicts|init)
+            sync|pull|push|status|conflicts|init|unschedule)
                 MODE="$1"
                 shift
+                ;;
+            schedule)
+                MODE="schedule"
+                # Check if next arg is a number (interval)
+                if [[ -n "$2" && "$2" =~ ^[0-9]+$ ]]; then
+                    SCHEDULE_INTERVAL="$2"
+                    shift 2
+                else
+                    SCHEDULE_INTERVAL=15  # Default
+                    shift
+                fi
                 ;;
 
             # Connection options
@@ -1140,6 +1703,9 @@ main() {
     # Check dependencies
     check_dependencies
 
+    # Acquire lock to prevent concurrent runs (Phase 3)
+    acquire_lock
+
     # Select connection mode
     if select_connection_mode; then
         CONNECTION_MODE="ssh"
@@ -1216,6 +1782,23 @@ main() {
             else
                 echo "No conflict history found"
             fi
+            ;;
+        schedule)
+            log_info "Setting up automated sync"
+            # Try systemd first, fall back to cron
+            if command -v systemctl >/dev/null 2>&1; then
+                log_info "Using systemd timer (preferred)"
+                install_systemd_timer "${SCHEDULE_INTERVAL:-15}"
+            elif command -v crontab >/dev/null 2>&1; then
+                log_info "Using cron (systemd not available)"
+                install_cron_job "${SCHEDULE_INTERVAL:-15}"
+            else
+                error_exit "Neither systemd nor cron available. Cannot schedule automated sync."
+            fi
+            ;;
+        unschedule)
+            log_info "Removing automated sync"
+            uninstall_automation
             ;;
         *)
             error_exit "Unknown mode: $MODE"
