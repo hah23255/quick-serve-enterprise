@@ -1,0 +1,55 @@
+# qs-sync Configuration File
+# Edit this file to configure your synchronization settings
+
+# Remote Server Settings
+REMOTE_HOST="192.168.1.120"          # Remote server hostname or IP
+REMOTE_USER="$USER"                   # SSH username (defaults to current user)
+REMOTE_PATH="/home/$USER/DropBasket"  # Remote directory path
+SSH_PORT=22                           # SSH port (default: 22)
+
+# Local Settings
+LOCAL_PATH="$HOME/DropBasket"         # Local directory to sync
+
+# HTTP Fallback Settings (for wget one-way pull)
+HTTP_PORT=50080                       # HTTP port when SSH unavailable
+HTTP_ONLY=false                       # Set to true to force HTTP mode
+
+# Sync Behavior
+DEFAULT_MODE="sync"                   # sync, pull, or push
+AUTO_RESOLVE_CONFLICTS=false          # true = newest wins, false = create backups
+CREATE_CONFLICT_BACKUPS=true          # Create .conflict-* files for conflicts
+MAX_CONFLICT_AGE_DAYS=30              # Delete conflict files older than N days
+
+# Logging
+LOG_FILE="$HOME/.local/share/qs-sync/sync.log"
+CONFLICT_LOG="$HOME/.local/share/qs-sync/conflicts.log"
+LOG_LEVEL="info"                      # debug, info, warn, error
+
+# Exclude Patterns
+EXCLUDE_FILE="$HOME/.config/qs-sync/exclude"
+
+# Connection Settings
+CONNECTION_TIMEOUT=10                 # Seconds
+RETRY_ATTEMPTS=3                      # Number of retry attempts
+RETRY_DELAY=5                         # Seconds between retries
+
+# Performance
+RSYNC_BANDWIDTH_LIMIT=""              # KB/s limit (empty = unlimited)
+RSYNC_COMPRESS_LEVEL=6                # 0-9 (0=no compression, 9=max)
+RSYNC_PARALLEL_THREADS=1              # Number of parallel rsync threads
+
+# Advanced
+STATE_DB="$HOME/.local/share/qs-sync/state.db"
+ENABLE_DELETION_SYNC=false            # Propagate deletions (dangerous!)
+DRY_RUN_BY_DEFAULT=false              # Always preview first
+
+# Phase 2: State Tracking & Conflict Resolution
+CHECKSUM_ALGORITHM="sha256"           # sha256 (recommended), md5 (not recommended)
+CHECKSUM_ADAPTIVE=true                # true = full checksum <100MB, partial for larger files
+CHECKSUM_SKIP_SMALL_FILES=true        # Skip checksum for files <1KB (use mtime only)
+CHECKSUM_LARGE_FILE_THRESHOLD=104857600  # 100MB threshold for partial checksums
+
+# Conflict Resolution Strategy
+CONFLICT_STRATEGY="NEWEST_WINS"       # NEWEST_WINS (auto), BACKUP_BOTH, LOCAL_WINS, REMOTE_WINS
+CONFLICT_BACKUP_SUFFIX=".qs-sync-conflict-{timestamp}-{host}"
+REQUIRE_SSH_FOR_SYNC=true             # true = error if SSH unavailable (recommended)

@@ -1,0 +1,1233 @@
+#!/bin/bash
+# qs-sync - Bidirectional File Synchronization Tool
+# Version: 1.0.0
+# Description: Production-grade bidirectional sync with conflict detection
+# Author: Quick-Serve Enterprise Team
+# License: MIT
+
+set -euo pipefail  # Exit on error, undefined vars, pipe failures
+
+# ============================================================================
+# METADATA
+# ============================================================================
+
+VERSION="1.0.0"
+SCRIPT_NAME="qs-sync"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+# ============================================================================
+# DEFAULT CONFIGURATION
+# ============================================================================
+
+# Directories
+CONFIG_DIR="$HOME/.config/qs-sync"
+DATA_DIR="$HOME/.local/share/qs-sync"
+CONFIG_FILE="$CONFIG_DIR/config"
+EXCLUDE_FILE="$CONFIG_DIR/exclude"
+STATE_DB="$DATA_DIR/state.db"
+LOG_FILE="$DATA_DIR/sync.log"
+CONFLICT_LOG="$DATA_DIR/conflicts.log"
+
+# Default values (overridden by config file)
+REMOTE_HOST=""
+REMOTE_USER="$USER"
+REMOTE_PATH=""
+SSH_PORT=22
+HTTP_PORT=50080
+LOCAL_PATH="$HOME/DropBasket"
+DEFAULT_MODE="sync"
+LOG_LEVEL="info"
+CONNECTION_TIMEOUT=10
+RETRY_ATTEMPTS=3
+RETRY_DELAY=5
+
+# Runtime state
+MODE=""
+DRY_RUN=false
+VERBOSE=false
+QUIET=false
+HTTP_ONLY=false
+
+# ============================================================================
+# LOGGING FUNCTIONS
+# ============================================================================
+
+# Log levels: DEBUG=0, INFO=1, WARN=2, ERROR=3
+declare -A LOG_LEVELS=([debug]=0 [info]=1 [warn]=2 [error]=3)
+
+log_message() {
+    local level="$1"
+    shift
+    local message="$*"
+    local timestamp=$(date '+%Y-%m-%d %H:%M:%S')
+
+    # Check if we should log this level
+    local current_level=${LOG_LEVELS[${LOG_LEVEL:-info}]}
+    local msg_level=${LOG_LEVELS[$level]}
+
+    if [[ $msg_level -ge $current_level ]]; then
+        # Console output
+        if [[ "$QUIET" != true ]]; then
+            case "$level" in
+                error) echo -e "\033[0;31m[ERROR]\033[0m $message" >&2 ;;
+                warn)  echo -e "\033[0;33m[WARN]\033[0m $message" >&2 ;;
+                info)  echo -e "\033[0;32m[INFO]\033[0m $message" ;;
+                debug) [[ "$VERBOSE" == true ]] && echo -e "\033[0;36m[DEBUG]\033[0m $message" ;;
+            esac
+        fi
+
+        # File logging
+        if [[ -n "${LOG_FILE:-}" ]]; then
+            echo "[$timestamp] [$level] $message" >> "$LOG_FILE"
+        fi
+    fi
+}
+
+log_debug() { log_message debug "$@"; }
+log_info()  { log_message info "$@"; }
+log_warn()  { log_message warn "$@"; }
+log_error() { log_message error "$@"; }
+
+error_exit() {
+    log_error "$@"
+    exit 1
+}
+
+# ============================================================================
+# CONFIGURATION MANAGEMENT
+# ============================================================================
+
+load_config() {
+    log_debug "Loading configuration from $CONFIG_FILE"
+
+    if [[ ! -f "$CONFIG_FILE" ]]; then
+        log_warn "Config file not found: $CONFIG_FILE"
+        log_info "Run '$SCRIPT_NAME init' to create configuration"
+        return 1
+    fi
+
+    # Source config file
+    # shellcheck source=/dev/null
+    source "$CONFIG_FILE" || error_exit "Failed to load config file"
+
+    log_debug "Configuration loaded successfully"
+    return 0
+}
+
+validate_config() {
+    log_debug "Validating configuration"
+
+    local errors=0
+
+    # Check required settings
+    if [[ -z "$REMOTE_HOST" ]]; then
+        log_error "REMOTE_HOST not set in config"
+        ((errors++))
+    fi
+
+    if [[ -z "$LOCAL_PATH" ]]; then
+        log_error "LOCAL_PATH not set in config"
+        ((errors++))
+    fi
+
+    if [[ -z "$REMOTE_PATH" ]]; then
+        log_error "REMOTE_PATH not set in config"
+        ((errors++))
+    fi
+
+    # Check local path exists
+    if [[ ! -d "$LOCAL_PATH" ]]; then
+        log_warn "Local path does not exist: $LOCAL_PATH"
+        read -p "Create it? (y/n) " -n 1 -r
+        echo
+        if [[ $REPLY =~ ^[Yy]$ ]]; then
+            mkdir -p "$LOCAL_PATH" || error_exit "Failed to create $LOCAL_PATH"
+            log_info "Created local path: $LOCAL_PATH"
+        else
+            ((errors++))
+        fi
+    fi
+
+    if [[ $errors -gt 0 ]]; then
+        error_exit "Configuration validation failed with $errors error(s)"
+    fi
+
+    log_debug "Configuration validated successfully"
+    return 0
+}
+
+# ============================================================================
+# DEPENDENCY CHECKING
+# ============================================================================
+
+check_dependencies() {
+    log_debug "Checking dependencies"
+
+    local missing=()
+
+    # Required dependencies
+    command -v rsync >/dev/null 2>&1 || missing+=("rsync")
+    command -v ssh >/dev/null 2>&1 || missing+=("ssh")
+    command -v wget >/dev/null 2>&1 || missing+=("wget")
+
+    if [[ ${#missing[@]} -gt 0 ]]; then
+        error_exit "Missing dependencies: ${missing[*]}\nInstall with: sudo apt install ${missing[*]}"
+    fi
+
+    log_debug "All dependencies satisfied"
+    return 0
+}
+
+# ============================================================================
+# CONNECTION TESTING
+# ============================================================================
+
+test_ssh_connection() {
+    log_debug "Testing SSH connection to $REMOTE_USER@$REMOTE_HOST:$SSH_PORT"
+
+    local ssh_opts=(
+        -p "$SSH_PORT"
+        -o ConnectTimeout="$CONNECTION_TIMEOUT"
+        -o BatchMode=yes
+        -o StrictHostKeyChecking=no
+    )
+
+    if ssh "${ssh_opts[@]}" "$REMOTE_USER@$REMOTE_HOST" "echo OK" &>/dev/null; then
+        log_debug "SSH connection successful"
+        return 0
+    else
+        log_warn "SSH connection failed"
+        return 1
+    fi
+}
+
+test_http_connection() {
+    log_debug "Testing HTTP connection to http://$REMOTE_HOST:$HTTP_PORT"
+
+    if wget --spider --timeout="$CONNECTION_TIMEOUT" "http://$REMOTE_HOST:$HTTP_PORT" &>/dev/null; then
+        log_debug "HTTP connection successful"
+        return 0
+    else
+        log_warn "HTTP connection failed"
+        return 1
+    fi
+}
+
+select_connection_mode() {
+    log_debug "Selecting connection mode"
+
+    if [[ "$HTTP_ONLY" == true ]]; then
+        log_info "HTTP-only mode enabled"
+        return 1  # Return non-zero to indicate HTTP mode
+    fi
+
+    if test_ssh_connection; then
+        log_info "Using SSH mode (rsync over SSH)"
+        return 0  # Return zero to indicate SSH mode
+    else
+        log_warn "SSH unavailable, falling back to HTTP mode"
+        if test_http_connection; then
+            log_info "HTTP fallback mode activated"
+            return 1  # Return non-zero to indicate HTTP mode
+        else
+            error_exit "Both SSH and HTTP connections failed"
+        fi
+    fi
+}
+
+# ============================================================================
+# INITIALIZATION
+# ============================================================================
+
+init_qs_sync() {
+    log_info "Initializing qs-sync"
+
+    # Create directories
+    mkdir -p "$CONFIG_DIR" "$DATA_DIR" "$LOCAL_PATH"
+
+    # Create config if doesn't exist
+    if [[ ! -f "$CONFIG_FILE" ]]; then
+        log_info "Configuration already created at: $CONFIG_FILE"
+        log_info "Please edit the configuration and set your remote details"
+    fi
+
+    # Create exclude file if doesn't exist
+    if [[ ! -f "$EXCLUDE_FILE" ]]; then
+        log_info "Exclude patterns already created at: $EXCLUDE_FILE"
+    fi
+
+    # Create state database
+    touch "$STATE_DB"
+
+    # Create log files
+    touch "$LOG_FILE" "$CONFLICT_LOG"
+
+    log_info "✓ Initialization complete"
+    echo ""
+    echo "Next steps:"
+    echo "  1. Edit config: nano $CONFIG_FILE"
+    echo "  2. Set REMOTE_HOST, REMOTE_USER, and REMOTE_PATH"
+    echo "  3. Setup SSH key: ssh-keygen && ssh-copy-id \$USER@\$HOST"
+    echo "  4. Test connection: $SCRIPT_NAME status"
+    echo "  5. Preview sync: $SCRIPT_NAME --dry-run"
+    echo "  6. Run sync: $SCRIPT_NAME"
+
+    return 0
+}
+
+# ============================================================================
+# STATE DATABASE MANAGEMENT (Phase 2)
+# ============================================================================
+
+# State database format: TSV (Tab-Separated Values)
+# Fields: file_path<TAB>size<TAB>mtime<TAB>checksum<TAB>sync_time
+# Three databases: state.local.db, state.remote.db, state.base.db
+
+# Associative arrays for in-memory state
+declare -A STATE_LOCAL
+declare -A STATE_REMOTE
+declare -A STATE_BASE
+declare -A CHANGES_LOCAL
+declare -A CHANGES_REMOTE
+declare -A CONFLICTS
+
+# Initialize state databases
+state_db_init() {
+    log_debug "Initializing state databases"
+
+    local state_local="$DATA_DIR/state.local.db"
+    local state_remote="$DATA_DIR/state.remote.db"
+    local state_base="$DATA_DIR/state.base.db"
+
+    # Create empty state files if they don't exist
+    for state_file in "$state_local" "$state_remote" "$state_base"; do
+        if [[ ! -f "$state_file" ]]; then
+            echo "# qs-sync state database (TSV format)" > "$state_file"
+            echo "# file_path<TAB>size<TAB>mtime<TAB>checksum<TAB>sync_time" >> "$state_file"
+            log_debug "Created state database: $state_file"
+        fi
+    done
+
+    log_info "State databases initialized"
+    return 0
+}
+
+# Load state database into associative array
+state_db_load() {
+    local state_file="$1"
+    local array_name="$2"
+
+    log_debug "Loading state database: $state_file into $array_name"
+
+    if [[ ! -f "$state_file" ]]; then
+        log_warn "State file not found: $state_file"
+        return 1
+    fi
+
+    local count=0
+    while IFS=$'\t' read -r path size mtime checksum sync_time; do
+        # Skip comments and empty lines
+        [[ "$path" =~ ^# ]] && continue
+        [[ -z "$path" ]] && continue
+
+        # Store in associative array: path -> "size|mtime|checksum|sync_time"
+        eval "${array_name}[\$path]=\"\$size|\$mtime|\$checksum|\$sync_time\""
+        ((count++))
+    done < "$state_file"
+
+    log_debug "Loaded $count entries from $state_file"
+    return 0
+}
+
+# Save associative array to state database
+state_db_save() {
+    local array_name="$1"
+    local state_file="$2"
+
+    log_debug "Saving state database: $array_name to $state_file"
+
+    # Create temp file for atomic write
+    local temp_file="${state_file}.tmp.$$"
+
+    # Write header
+    echo "# qs-sync state database (TSV format)" > "$temp_file"
+    echo "# file_path<TAB>size<TAB>mtime<TAB>checksum<TAB>sync_time" >> "$temp_file"
+
+    # Write entries (sorted by path for consistency)
+    local count=0
+    eval "
+        for path in \"\${!${array_name}[@]}\"; do
+            local data=\"\${${array_name}[\$path]}\"
+            local size=\$(echo \"\$data\" | cut -d'|' -f1)
+            local mtime=\$(echo \"\$data\" | cut -d'|' -f2)
+            local checksum=\$(echo \"\$data\" | cut -d'|' -f3)
+            local sync_time=\$(echo \"\$data\" | cut -d'|' -f4)
+            echo \"\$path\t\$size\t\$mtime\t\$checksum\t\$sync_time\"
+            ((count++))
+        done | sort
+    " >> "$temp_file"
+
+    # Atomic replace
+    mv "$temp_file" "$state_file" || {
+        log_error "Failed to save state database: $state_file"
+        rm -f "$temp_file"
+        return 1
+    }
+
+    log_debug "Saved $count entries to $state_file"
+    return 0
+}
+
+# Build exclude patterns for find command
+build_exclude_patterns() {
+    local exclude_file="$1"
+    local patterns=""
+
+    # Default excludes (always applied)
+    patterns="-not -path '*/.git/*'"
+    patterns="$patterns -not -path '*/.svn/*'"
+    patterns="$patterns -not -path '*/.hg/*'"
+    patterns="$patterns -not -path '*/node_modules/*'"
+    patterns="$patterns -not -path '*/__pycache__/*'"
+    patterns="$patterns -not -name '.DS_Store'"
+    patterns="$patterns -not -name 'Thumbs.db'"
+    patterns="$patterns -not -name '*.tmp'"
+    patterns="$patterns -not -name '*.swp'"
+    patterns="$patterns -not -name '*~'"
+    patterns="$patterns -not -name '.qs-sync-conflict-*'"
+
+    # Load custom excludes from file
+    if [[ -f "$exclude_file" ]]; then
+        while IFS= read -r pattern; do
+            # Skip comments and empty lines
+            [[ "$pattern" =~ ^# ]] && continue
+            [[ -z "$pattern" ]] && continue
+
+            # Convert gitignore-style patterns to find expressions
+            if [[ "$pattern" =~ /$ ]]; then
+                # Directory pattern (ends with /)
+                patterns="$patterns -not -path '*/${pattern%/}/*'"
+            elif [[ "$pattern" =~ \* ]]; then
+                # Wildcard pattern
+                patterns="$patterns -not -name '$pattern'"
+            else
+                # Exact name pattern
+                patterns="$patterns -not -name '$pattern'"
+            fi
+        done < "$exclude_file"
+    fi
+
+    echo "$patterns"
+}
+
+# Calculate checksum (adaptive: full for <100MB, partial for larger)
+calculate_checksum() {
+    local file_path="$1"
+    local file_size="$2"
+
+    # Skip checksum for tiny files (<1KB) - use mtime only
+    if [[ "$file_size" -lt 1024 ]]; then
+        echo "SKIP_SMALL"
+        return 0
+    fi
+
+    # Full SHA256 for files <100MB
+    if [[ "$file_size" -lt 104857600 ]]; then
+        sha256sum "$file_path" 2>/dev/null | awk '{print $1}'
+        return 0
+    fi
+
+    # Partial checksum for large files (>100MB)
+    # Hash: first 1MB + middle 1MB + last 1MB
+    log_debug "Using partial checksum for large file: $file_path ($file_size bytes)"
+    {
+        dd if="$file_path" bs=1M count=1 status=none 2>/dev/null
+        dd if="$file_path" bs=1M skip=$((file_size/2/1048576)) count=1 status=none 2>/dev/null
+        dd if="$file_path" bs=1M skip=$((file_size/1048576-1)) count=1 status=none 2>/dev/null
+    } | sha256sum 2>/dev/null | awk '{print $1 ":PARTIAL"}'
+
+    return 0
+}
+
+# Scan local directory tree
+scan_local_tree() {
+    local base_path="$1"
+    local exclude_file="$2"
+
+    log_info "Scanning local directory: $base_path"
+
+    if [[ ! -d "$base_path" ]]; then
+        log_error "Local path does not exist: $base_path"
+        return 1
+    fi
+
+    # Build exclude patterns
+    local exclude_patterns=$(build_exclude_patterns "$exclude_file")
+
+    # Clear STATE_LOCAL array
+    STATE_LOCAL=()
+
+    local count=0
+    local now=$(date +%s)
+
+    # Use find to scan directory
+    eval "find \"$base_path\" -type f $exclude_patterns -printf '%P\t%s\t%T@\n'" | \
+    while IFS=$'\t' read -r rel_path size mtime_float; do
+        # Convert float mtime to integer
+        local mtime="${mtime_float%.*}"
+
+        # Calculate checksum
+        local full_path="$base_path/$rel_path"
+        local checksum=$(calculate_checksum "$full_path" "$size")
+
+        # Store in STATE_LOCAL array
+        STATE_LOCAL["$rel_path"]="$size|$mtime|$checksum|$now"
+        ((count++))
+
+        # Progress indicator (every 100 files)
+        if [[ $((count % 100)) -eq 0 ]]; then
+            log_debug "Scanned $count files..."
+        fi
+    done
+
+    log_info "Scanned $count files from local directory"
+    return 0
+}
+
+# Scan remote directory tree (requires SSH)
+scan_remote_tree() {
+    local remote_user="$1"
+    local remote_host="$2"
+    local remote_path="$3"
+    local exclude_file="$4"
+
+    log_info "Scanning remote directory: $remote_user@$remote_host:$remote_path"
+
+    # Check connection mode
+    if [[ "$CONNECTION_MODE" != "ssh" ]]; then
+        log_error "Remote scanning requires SSH connection"
+        log_error "Bidirectional sync is not available in HTTP-only mode"
+        log_info "Please ensure SSH is configured: ssh $remote_user@$remote_host"
+        return 1
+    fi
+
+    # Clear STATE_REMOTE array
+    STATE_REMOTE=()
+
+    # Transfer scan function and exclude patterns to remote
+    local ssh_opts="-p $SSH_PORT -o ConnectTimeout=$CONNECTION_TIMEOUT"
+
+    # Build remote scan command
+    local remote_cmd="$(declare -f build_exclude_patterns calculate_checksum); "
+    remote_cmd+="exclude_patterns=\$(build_exclude_patterns '$exclude_file'); "
+    remote_cmd+="find '$remote_path' -type f \$exclude_patterns -printf '%P\t%s\t%T@\n'"
+
+    local count=0
+    local now=$(date +%s)
+
+    # Execute remote scan via SSH
+    ssh $ssh_opts "$remote_user@$remote_host" "$remote_cmd" | \
+    while IFS=$'\t' read -r rel_path size mtime_float; do
+        # Convert float mtime to integer
+        local mtime="${mtime_float%.*}"
+
+        # For remote files, calculate checksum on remote side (future optimization)
+        # For now, mark as PENDING and calculate during actual sync
+        local checksum="PENDING"
+
+        # Store in STATE_REMOTE array
+        STATE_REMOTE["$rel_path"]="$size|$mtime|$checksum|$now"
+        ((count++))
+
+        # Progress indicator
+        if [[ $((count % 100)) -eq 0 ]]; then
+            log_debug "Scanned $count remote files..."
+        fi
+    done
+
+    log_info "Scanned $count files from remote directory"
+    return 0
+}
+
+# Detect changes between base state and current state
+detect_changes() {
+    local base_array="$1"      # Array name (STATE_BASE)
+    local current_array="$2"   # Array name (STATE_LOCAL or STATE_REMOTE)
+    local changes_array="$3"   # Output array name (CHANGES_LOCAL or CHANGES_REMOTE)
+
+    log_debug "Detecting changes: $base_array -> $current_array"
+
+    local add_count=0
+    local modify_count=0
+    local delete_count=0
+
+    # Clear changes array
+    eval "${changes_array}=()"
+
+    # Check for new and modified files
+    eval "
+        for path in \"\${!${current_array}[@]}\"; do
+            local current_data=\"\${${current_array}[\$path]}\"
+            local base_data=\"\${${base_array}[\$path]}\"
+
+            if [[ -z \"\$base_data\" ]]; then
+                # New file (ADD)
+                ${changes_array}[\$path]=\"ADD\"
+                ((add_count++))
+            else
+                # Check if modified
+                local current_checksum=\$(echo \"\$current_data\" | cut -d'|' -f3)
+                local base_checksum=\$(echo \"\$base_data\" | cut -d'|' -f3)
+
+                # Also check size and mtime for quick detection
+                local current_size=\$(echo \"\$current_data\" | cut -d'|' -f1)
+                local current_mtime=\$(echo \"\$current_data\" | cut -d'|' -f2)
+                local base_size=\$(echo \"\$base_data\" | cut -d'|' -f1)
+                local base_mtime=\$(echo \"\$base_data\" | cut -d'|' -f2)
+
+                if [[ \"\$current_size\" != \"\$base_size\" ]] || \
+                   [[ \"\$current_mtime\" != \"\$base_mtime\" ]] || \
+                   [[ \"\$current_checksum\" != \"\$base_checksum\" ]]; then
+                    # Modified file
+                    ${changes_array}[\$path]=\"MODIFY\"
+                    ((modify_count++))
+                fi
+            fi
+        done
+    "
+
+    # Check for deleted files
+    eval "
+        for path in \"\${!${base_array}[@]}\"; do
+            local current_data=\"\${${current_array}[\$path]}\"
+
+            if [[ -z \"\$current_data\" ]]; then
+                # File deleted
+                ${changes_array}[\$path]=\"DELETE\"
+                ((delete_count++))
+            fi
+        done
+    "
+
+    log_info "Changes detected: +$add_count ~$modify_count -$delete_count"
+
+    return $((add_count + modify_count + delete_count))
+}
+
+# Detect conflicts (three-way merge)
+detect_conflicts() {
+    log_debug "Detecting conflicts (three-way merge)"
+
+    # Clear conflicts array
+    CONFLICTS=()
+
+    local conflict_count=0
+
+    # Check all files in local changes
+    for path in "${!CHANGES_LOCAL[@]}"; do
+        local local_change="${CHANGES_LOCAL[$path]}"
+        local remote_change="${CHANGES_REMOTE[$path]}"
+
+        # Skip if no remote change
+        [[ -z "$remote_change" ]] && continue
+
+        # CONFLICT: Both sides modified
+        if [[ "$local_change" == "MODIFY" && "$remote_change" == "MODIFY" ]]; then
+            CONFLICTS[$path]="BOTH_MODIFIED"
+            ((conflict_count++))
+            log_warn "Conflict detected: $path (both sides modified)"
+
+        # CONFLICT: Local deleted, remote modified
+        elif [[ "$local_change" == "DELETE" && "$remote_change" == "MODIFY" ]]; then
+            CONFLICTS[$path]="LOCAL_DELETE_REMOTE_MODIFY"
+            ((conflict_count++))
+            log_warn "Conflict detected: $path (local deleted, remote modified)"
+
+        # CONFLICT: Local modified, remote deleted
+        elif [[ "$local_change" == "MODIFY" && "$remote_change" == "DELETE" ]]; then
+            CONFLICTS[$path]="LOCAL_MODIFY_REMOTE_DELETE"
+            ((conflict_count++))
+            log_warn "Conflict detected: $path (local modified, remote deleted)"
+        fi
+    done
+
+    # Check remote-only changes for delete conflicts
+    for path in "${!CHANGES_REMOTE[@]}"; do
+        local local_change="${CHANGES_LOCAL[$path]}"
+        local remote_change="${CHANGES_REMOTE[$path]}"
+
+        # Skip if already processed
+        [[ -n "$local_change" ]] && continue
+
+        # Already handled in above loop
+    done
+
+    if [[ $conflict_count -gt 0 ]]; then
+        log_warn "Total conflicts detected: $conflict_count"
+    fi
+
+    return $conflict_count
+}
+
+# Resolve conflict using NEWEST_WINS strategy
+resolve_conflict() {
+    local path="$1"
+    local conflict_type="$2"
+
+    log_debug "Resolving conflict: $path ($conflict_type)"
+
+    # Get mtime from both sides
+    local local_data="${STATE_LOCAL[$path]}"
+    local remote_data="${STATE_REMOTE[$path]}"
+
+    local local_mtime=0
+    local remote_mtime=0
+
+    [[ -n "$local_data" ]] && local_mtime=$(echo "$local_data" | cut -d'|' -f2)
+    [[ -n "$remote_data" ]] && remote_mtime=$(echo "$remote_data" | cut -d'|' -f2)
+
+    # Compare mtimes and decide winner
+    if [[ $local_mtime -gt $remote_mtime ]]; then
+        log_info "Conflict resolution: $path -> LOCAL wins (newer)"
+        echo "LOCAL"
+    elif [[ $remote_mtime -gt $local_mtime ]]; then
+        log_info "Conflict resolution: $path -> REMOTE wins (newer)"
+        echo "REMOTE"
+    else
+        # Same mtime (unlikely) - prefer local
+        log_info "Conflict resolution: $path -> LOCAL wins (same mtime)"
+        echo "LOCAL"
+    fi
+
+    return 0
+}
+
+# ============================================================================
+# SYNC EXECUTION (Phase 2 Main Functions)
+# ============================================================================
+
+# Analyze sync state (main Phase 2 entry point)
+sync_analyze() {
+    log_info "Analyzing sync state..."
+
+    # Initialize state databases if needed
+    state_db_init
+
+    # Load base state (last successful sync)
+    state_db_load "$DATA_DIR/state.base.db" STATE_BASE || true  # OK if doesn't exist on first run
+
+    # Scan local directory tree
+    scan_local_tree "$LOCAL_PATH" "$EXCLUDE_FILE" || return 1
+
+    # Scan remote directory tree
+    scan_remote_tree "$REMOTE_USER" "$REMOTE_HOST" "$REMOTE_PATH" "$EXCLUDE_FILE" || return 1
+
+    # Detect changes on both sides
+    detect_changes STATE_BASE STATE_LOCAL CHANGES_LOCAL
+    local local_changes=$?
+
+    detect_changes STATE_BASE STATE_REMOTE CHANGES_REMOTE
+    local remote_changes=$?
+
+    # Detect conflicts
+    detect_conflicts
+    local conflicts=$?
+
+    # Summary
+    if [[ $conflicts -gt 0 ]]; then
+        log_warn "Sync analysis complete: $local_changes local changes, $remote_changes remote changes, $conflicts conflicts"
+        return 2  # Conflicts detected
+    elif [[ $local_changes -eq 0 && $remote_changes -eq 0 ]]; then
+        log_info "Sync analysis complete: No changes detected"
+        return 0  # No changes
+    else
+        log_info "Sync analysis complete: $local_changes local changes, $remote_changes remote changes"
+        return 1  # Changes pending
+    fi
+}
+
+# Preview sync changes (dry-run mode)
+sync_preview() {
+    log_info "Sync Preview (dry-run mode)"
+    echo ""
+    echo "====================================="
+    echo "  qs-sync Preview"
+    echo "====================================="
+    echo ""
+
+    # Show local changes
+    if [[ ${#CHANGES_LOCAL[@]} -gt 0 ]]; then
+        echo "LOCAL CHANGES (will be pushed to remote):"
+        for path in "${!CHANGES_LOCAL[@]}"; do
+            local change="${CHANGES_LOCAL[$path]}"
+            local data="${STATE_LOCAL[$path]}"
+            local size=$(echo "$data" | cut -d'|' -f1)
+            local size_human=$(numfmt --to=iec-i --suffix=B $size 2>/dev/null || echo "${size}B")
+
+            case "$change" in
+                ADD)
+                    echo "  ↑ ADD    $path ($size_human)"
+                    ;;
+                MODIFY)
+                    echo "  ↑ MODIFY $path ($size_human)"
+                    ;;
+                DELETE)
+                    echo "  ↑ DELETE $path"
+                    ;;
+            esac
+        done | sort
+        echo ""
+    fi
+
+    # Show remote changes
+    if [[ ${#CHANGES_REMOTE[@]} -gt 0 ]]; then
+        echo "REMOTE CHANGES (will be pulled to local):"
+        for path in "${!CHANGES_REMOTE[@]}"; do
+            local change="${CHANGES_REMOTE[$path]}"
+            local data="${STATE_REMOTE[$path]}"
+            local size=$(echo "$data" | cut -d'|' -f1)
+            local size_human=$(numfmt --to=iec-i --suffix=B $size 2>/dev/null || echo "${size}B")
+
+            case "$change" in
+                ADD)
+                    echo "  ↓ ADD    $path ($size_human)"
+                    ;;
+                MODIFY)
+                    echo "  ↓ MODIFY $path ($size_human)"
+                    ;;
+                DELETE)
+                    echo "  ↓ DELETE $path"
+                    ;;
+            esac
+        done | sort
+        echo ""
+    fi
+
+    # Show conflicts
+    if [[ ${#CONFLICTS[@]} -gt 0 ]]; then
+        echo "CONFLICTS (will be auto-resolved with NEWEST_WINS):"
+        for path in "${!CONFLICTS[@]}"; do
+            local conflict_type="${CONFLICTS[$path]}"
+            local resolution=$(resolve_conflict "$path" "$conflict_type")
+
+            echo "  ✗ $path"
+            echo "     Type: $conflict_type"
+            echo "     Resolution: $resolution wins (newer modification time)"
+        done | sort
+        echo ""
+    fi
+
+    # Summary
+    echo "====================================="
+    echo "Summary:"
+    echo "  Local changes:  ${#CHANGES_LOCAL[@]}"
+    echo "  Remote changes: ${#CHANGES_REMOTE[@]}"
+    echo "  Conflicts:      ${#CONFLICTS[@]}"
+    echo "====================================="
+    echo ""
+
+    return 0
+}
+
+# Execute sync (apply changes)
+sync_execute() {
+    log_info "Executing sync..."
+
+    if [[ "$DRY_RUN" == true ]]; then
+        log_info "Dry-run mode: No changes will be made"
+        sync_preview
+        return 0
+    fi
+
+    # Resolve conflicts first
+    if [[ ${#CONFLICTS[@]} -gt 0 ]]; then
+        log_info "Resolving ${#CONFLICTS[@]} conflicts using NEWEST_WINS strategy"
+
+        for path in "${!CONFLICTS[@]}"; do
+            local conflict_type="${CONFLICTS[$path]}"
+            local winner=$(resolve_conflict "$path" "$conflict_type")
+
+            # Apply resolution
+            if [[ "$winner" == "LOCAL" ]]; then
+                # Local wins: push to remote
+                CHANGES_LOCAL[$path]="MODIFY"
+                unset CHANGES_REMOTE[$path]
+            elif [[ "$winner" == "REMOTE" ]]; then
+                # Remote wins: pull from remote
+                CHANGES_REMOTE[$path]="MODIFY"
+                unset CHANGES_LOCAL[$path]
+            fi
+
+            # Log conflict resolution
+            echo "$(date +%Y-%m-%d\ %H:%M:%S) CONFLICT $path $conflict_type RESOLVED:$winner" >> "$CONFLICT_LOG"
+        done
+    fi
+
+    # Execute rsync operations (using arrays for security - no eval)
+    local -a ssh_cmd=("ssh" "-p" "$SSH_PORT" "-o" "ConnectTimeout=$CONNECTION_TIMEOUT")
+    local -a rsync_base_opts=("-avz" "--partial" "--progress")
+
+    # Add exclude patterns
+    if [[ -f "$EXCLUDE_FILE" ]]; then
+        rsync_base_opts+=("--exclude-from=$EXCLUDE_FILE")
+    fi
+
+    local errors=0
+
+    # Push local changes
+    if [[ ${#CHANGES_LOCAL[@]} -gt 0 ]]; then
+        log_info "Pushing ${#CHANGES_LOCAL[@]} local changes to remote..."
+
+        for path in "${!CHANGES_LOCAL[@]}"; do
+            local change="${CHANGES_LOCAL[$path]}"
+
+            case "$change" in
+                ADD|MODIFY)
+                    # Push file to remote (secure - no eval, proper escaping)
+                    local local_file="$LOCAL_PATH/$path"
+                    local remote_file="$REMOTE_USER@$REMOTE_HOST:$REMOTE_PATH/$path"
+                    local remote_dir=$(dirname "$REMOTE_PATH/$path")
+
+                    # Create remote directory if needed (secure escaping)
+                    local escaped_remote_dir
+                    escaped_remote_dir=$(printf %q "$remote_dir")
+                    ssh -p "$SSH_PORT" "$REMOTE_USER@$REMOTE_HOST" "mkdir -p $escaped_remote_dir" || ((errors++))
+
+                    # Rsync file using array (prevents command injection)
+                    rsync "${rsync_base_opts[@]}" -e "ssh -p $SSH_PORT -o ConnectTimeout=$CONNECTION_TIMEOUT" \
+                        "$local_file" "$remote_file" || {
+                        log_error "Failed to push: $path"
+                        ((errors++))
+                    }
+                    ;;
+
+                DELETE)
+                    # Delete file on remote (secure escaping)
+                    log_warn "Deleting remote file: $path"
+                    local escaped_remote_file
+                    escaped_remote_file=$(printf %q "$REMOTE_PATH/$path")
+                    ssh -p "$SSH_PORT" "$REMOTE_USER@$REMOTE_HOST" "rm -f $escaped_remote_file" || {
+                        log_error "Failed to delete remote file: $path"
+                        ((errors++))
+                    }
+                    ;;
+            esac
+        done
+    fi
+
+    # Pull remote changes
+    if [[ ${#CHANGES_REMOTE[@]} -gt 0 ]]; then
+        log_info "Pulling ${#CHANGES_REMOTE[@]} remote changes to local..."
+
+        for path in "${!CHANGES_REMOTE[@]}"; do
+            local change="${CHANGES_REMOTE[$path]}"
+
+            case "$change" in
+                ADD|MODIFY)
+                    # Pull file from remote (secure - no eval)
+                    local remote_file="$REMOTE_USER@$REMOTE_HOST:$REMOTE_PATH/$path"
+                    local local_file="$LOCAL_PATH/$path"
+                    local local_dir=$(dirname "$LOCAL_PATH/$path")
+
+                    # Create local directory if needed
+                    mkdir -p "$local_dir" || ((errors++))
+
+                    # Rsync file using array (prevents command injection)
+                    rsync "${rsync_base_opts[@]}" -e "ssh -p $SSH_PORT -o ConnectTimeout=$CONNECTION_TIMEOUT" \
+                        "$remote_file" "$local_file" || {
+                        log_error "Failed to pull: $path"
+                        ((errors++))
+                    }
+                    ;;
+
+                DELETE)
+                    # Delete file locally (safe - path properly quoted)
+                    log_warn "Deleting local file: $path"
+                    rm -f "$LOCAL_PATH/$path" || {
+                        log_error "Failed to delete local file: $path"
+                        ((errors++))
+                    }
+                    ;;
+            esac
+        done
+    fi
+
+    # Update base state (merge local and remote states)
+    if [[ $errors -eq 0 ]]; then
+        log_info "Updating base state database..."
+
+        # Merge STATE_LOCAL and STATE_REMOTE into STATE_BASE
+        STATE_BASE=()
+        for path in "${!STATE_LOCAL[@]}"; do
+            STATE_BASE[$path]="${STATE_LOCAL[$path]}"
+        done
+        for path in "${!STATE_REMOTE[@]}"; do
+            STATE_BASE[$path]="${STATE_REMOTE[$path]}"
+        done
+
+        # Save base state
+        state_db_save STATE_BASE "$DATA_DIR/state.base.db"
+
+        log_info "✓ Sync completed successfully"
+        return 0
+    else
+        log_error "Sync completed with $errors error(s)"
+        log_warn "Base state NOT updated due to errors"
+        return 1
+    fi
+}
+
+# ============================================================================
+# CLI ARGUMENT PARSING
+# ============================================================================
+
+show_help() {
+    cat << EOF
+qs-sync - Bidirectional File Synchronization Tool v$VERSION
+
+USAGE:
+    $SCRIPT_NAME [MODE] [OPTIONS]
+
+MODES:
+    sync              Bidirectional synchronization (default)
+    pull              Pull changes from remote to local (one-way)
+    push              Push changes from local to remote (one-way)
+    status            Show sync status and pending changes
+    conflicts         List unresolved conflicts
+    init              Initialize configuration and state database
+
+OPTIONS:
+    -r, --remote HOST       Remote server hostname or IP
+    -u, --user USER         SSH username
+    -p, --port PORT         SSH port (default: 22)
+    --http-port PORT        HTTP port for fallback (default: 50080)
+    --http-only             Force HTTP mode (wget) instead of SSH
+    -l, --local PATH        Local directory (default: ~/DropBasket/)
+    --remote-path PATH      Remote directory path
+
+    -n, --dry-run           Preview changes without executing
+    -v, --verbose           Verbose output (debug mode)
+    -q, --quiet             Minimal output
+
+    --exclude-from FILE     Exclude patterns file
+    --no-backup             Skip conflict backup creation
+
+    -h, --help              Show this help message
+    --version               Show version information
+
+EXAMPLES:
+    $SCRIPT_NAME init                    # First-time setup
+    $SCRIPT_NAME                         # Bidirectional sync
+    $SCRIPT_NAME pull --dry-run          # Preview remote changes
+    $SCRIPT_NAME push -v                 # Push with verbose output
+    $SCRIPT_NAME status                  # Check sync status
+    $SCRIPT_NAME --http-only pull        # Use HTTP fallback
+
+CONFIGURATION:
+    Config file: $CONFIG_FILE
+    Exclude patterns: $EXCLUDE_FILE
+    State database: $STATE_DB
+    Logs: $LOG_FILE
+
+For more information, visit:
+    https://github.com/hah23255/quick-serve-enterprise
+
+EOF
+}
+
+parse_arguments() {
+    # Parse command-line arguments
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            # Modes
+            sync|pull|push|status|conflicts|init)
+                MODE="$1"
+                shift
+                ;;
+
+            # Connection options
+            -r|--remote)
+                REMOTE_HOST="$2"
+                shift 2
+                ;;
+            -u|--user)
+                REMOTE_USER="$2"
+                shift 2
+                ;;
+            -p|--port)
+                SSH_PORT="$2"
+                shift 2
+                ;;
+            --http-port)
+                HTTP_PORT="$2"
+                shift 2
+                ;;
+            --http-only)
+                HTTP_ONLY=true
+                shift
+                ;;
+
+            # Path options
+            -l|--local)
+                LOCAL_PATH="$2"
+                shift 2
+                ;;
+            --remote-path)
+                REMOTE_PATH="$2"
+                shift 2
+                ;;
+
+            # Behavior options
+            -n|--dry-run)
+                DRY_RUN=true
+                shift
+                ;;
+            -v|--verbose)
+                VERBOSE=true
+                LOG_LEVEL="debug"
+                shift
+                ;;
+            -q|--quiet)
+                QUIET=true
+                shift
+                ;;
+
+            # Exclude options
+            --exclude-from)
+                EXCLUDE_FILE="$2"
+                shift 2
+                ;;
+
+            # Help and version
+            -h|--help)
+                show_help
+                exit 0
+                ;;
+            --version)
+                echo "$SCRIPT_NAME version $VERSION"
+                exit 0
+                ;;
+
+            # Unknown option
+            *)
+                error_exit "Unknown option: $1\nUse --help for usage information"
+                ;;
+        esac
+    done
+
+    # Set default mode if not specified
+    MODE="${MODE:-$DEFAULT_MODE}"
+}
+
+# ============================================================================
+# MAIN FUNCTION
+# ============================================================================
+
+main() {
+    # Parse arguments
+    parse_arguments "$@"
+
+    # Handle init mode early (before loading config)
+    if [[ "$MODE" == "init" ]]; then
+        init_qs_sync
+        exit 0
+    fi
+
+    # Load and validate configuration
+    load_config || error_exit "Failed to load configuration. Run '$SCRIPT_NAME init' first."
+    validate_config
+
+    # Check dependencies
+    check_dependencies
+
+    # Select connection mode
+    if select_connection_mode; then
+        CONNECTION_MODE="ssh"
+    else
+        CONNECTION_MODE="http"
+    fi
+
+    log_info "Mode: $MODE | Connection: $CONNECTION_MODE | Dry-run: $DRY_RUN"
+
+    # Execute requested mode
+    case "$MODE" in
+        sync)
+            log_info "Starting bidirectional synchronization"
+            if sync_analyze; then
+                analysis_result=$?
+                if [[ "$DRY_RUN" == true ]]; then
+                    sync_preview
+                else
+                    sync_execute
+                fi
+            else
+                error_exit "Sync analysis failed"
+            fi
+            ;;
+        pull)
+            log_info "Starting one-way pull (remote → local)"
+            # Similar to sync but only apply remote changes
+            if sync_analyze; then
+                # Clear local changes (pull-only mode)
+                CHANGES_LOCAL=()
+                if [[ "$DRY_RUN" == true ]]; then
+                    sync_preview
+                else
+                    sync_execute
+                fi
+            else
+                error_exit "Pull analysis failed"
+            fi
+            ;;
+        push)
+            log_info "Starting one-way push (local → remote)"
+            # Similar to sync but only apply local changes
+            if sync_analyze; then
+                # Clear remote changes (push-only mode)
+                CHANGES_REMOTE=()
+                CONFLICTS=()  # No conflicts in push-only mode
+                if [[ "$DRY_RUN" == true ]]; then
+                    sync_preview
+                else
+                    sync_execute
+                fi
+            else
+                error_exit "Push analysis failed"
+            fi
+            ;;
+        status)
+            log_info "Sync Status Report"
+            if sync_analyze; then
+                sync_preview
+            else
+                error_exit "Status analysis failed"
+            fi
+            ;;
+        conflicts)
+            log_info "Unresolved Conflicts"
+            if [[ -f "$CONFLICT_LOG" ]]; then
+                echo ""
+                echo "====================================="
+                echo "  Conflict History"
+                echo "====================================="
+                echo ""
+                tail -20 "$CONFLICT_LOG"
+                echo ""
+            else
+                echo "No conflict history found"
+            fi
+            ;;
+        *)
+            error_exit "Unknown mode: $MODE"
+            ;;
+    esac
+
+    log_info "✓ qs-sync completed successfully"
+    return 0
+}
+
+# ============================================================================
+# SCRIPT ENTRY POINT
+# ============================================================================
+
+main "$@"

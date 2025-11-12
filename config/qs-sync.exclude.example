@@ -1,0 +1,57 @@
+# qs-sync Exclude Patterns
+# Files and directories matching these patterns will not be synced
+# Syntax: gitignore-style patterns
+
+# Version Control
+.git/
+.gitignore
+.svn/
+.hg/
+
+# System Files
+.DS_Store
+Thumbs.db
+desktop.ini
+.Trash/
+.Spotlight-V100/
+.TemporaryItems/
+.fseventsd/
+
+# Temporary Files
+*.tmp
+*.temp
+*.swp
+*.swo
+*.swn
+*~
+.#*
+\#*#
+
+# Build Artifacts
+*.o
+*.pyc
+*.pyo
+__pycache__/
+.cache/
+.pytest_cache/
+
+# IDE Files
+.vscode/
+.idea/
+*.iml
+.project
+.classpath
+.settings/
+
+# Conflict Files (don't sync conflicts themselves)
+*.conflict-*
+
+# Logs
+*.log
+
+# Archives (optional - uncomment if you don't want to sync these)
+# *.zip
+# *.tar
+# *.tar.gz
+# *.tgz
+# *.rar
