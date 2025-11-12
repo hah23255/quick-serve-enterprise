@@ -1,6 +1,31 @@
+================================================================================
+                          ENTERPRISE FORK NOTICE
+================================================================================
+
+This is an enterprise-hardened fork of the original quick-serve project.
+
+Original Project:
+  quick-serve by João Loureiro
+  https://github.com/joaofl/quick-serve
+
+Enterprise Fork:
+  quick-serve-enterprise by Hristo Hristov
+  https://github.com/hah23255/quick-serve-enterprise
+  Maintainer: Hristo Hristov (maintainer@ccvs.tech)
+  Website: https://www.ccvs.tech
+
+Enterprise-specific modifications, enhancements, and documentation are:
+  Copyright (c) 2025 Hristo Hristov
+
+Both the original project and enterprise modifications are licensed under
+the MIT License as follows:
+
+================================================================================
+
 MIT License
 
-Copyright (c) 2024 João Loureiro
+Copyright (c) 2024 João Loureiro (original project)
+Copyright (c) 2025 Hristo Hristov (enterprise modifications)
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal

@@ -1,14 +1,15 @@
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 [package]
-authors =  ["João Loureiro"]
-name = "quick-serve"
+authors = ["João Loureiro", "Hristo Hristov <maintainer@ccvs.tech>"]
+name = "quick-serve-enterprise"
 version = "0.3.1"
 edition = "2021"
 license = "MIT"
-repository = "https://github.com/joaofl/quick-serve"
-homepage = "https://github.com/joaofl/quick-serve"
-description = "Quick Serve: A zero-config, multi-platform, multi-protocol standalone server for prompt file serving, with or without GUI."
-categories = ["command-line-utilities", "development-tools"]
+repository = "https://github.com/hah23255/quick-serve-enterprise"
+homepage = "https://www.ccvs.tech"
+description = "Quick Serve Enterprise: Production-hardened fork with Android/Termux optimizations, critical bug fixes, custom error pages, and comprehensive operational documentation"
+categories = ["command-line-utilities", "development-tools", "web-programming::http-server"]
+keywords = ["http-server", "ftp", "tftp", "file-server", "android"]
 
 [features]
 ui = ["dep:egui", "dep:eframe", "dep:rfd"]
